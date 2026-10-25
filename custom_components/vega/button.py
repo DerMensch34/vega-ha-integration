@@ -11,7 +11,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import BUTTON_TYPES, DOMAIN
+from .const import BUTTON_TYPES, DEFAULT_IMEI, DOMAIN
 from .coordinator import VegaCoordinator
 from .entity import build_device_info
 from .runtime import CommandError
@@ -28,6 +28,8 @@ async def async_setup_entry(
 
     @callback
     def _sync_buttons() -> None:
+        if not coordinator.imei or coordinator.imei == DEFAULT_IMEI:
+            return
         active_slots = {
             int(s["slot"]) for s in coordinator.runtime.can_scripts if "slot" in s
         }

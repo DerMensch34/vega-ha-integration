@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -11,6 +11,7 @@ from .const import (
     CONF_DIRECT_CONTROL,
     CONF_PROXY_MODE,
     DEFAULT_DIRECT_CONTROL,
+    DEFAULT_IMEI,
     DEFAULT_PROXY_MODE,
     DOMAIN,
 )
@@ -28,9 +29,22 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     coordinator: VegaCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities(
-        VegaSwitch(coordinator, entry, key, *spec) for key, spec in SWITCHES.items()
-    )
+    added = False
+
+    @callback
+    def _sync_switches() -> None:
+        nonlocal added
+        if added:
+            return
+        if not coordinator.imei or coordinator.imei == DEFAULT_IMEI:
+            return
+        added = True
+        async_add_entities(
+            VegaSwitch(coordinator, entry, key, *spec) for key, spec in SWITCHES.items()
+        )
+
+    _sync_switches()
+    entry.async_on_unload(coordinator.async_add_listener(_sync_switches))
 
 
 class VegaSwitch(SwitchEntity):

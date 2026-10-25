@@ -20,6 +20,7 @@ from .const import (
     BLOCK_OFFLINE,
     COMMAND_PENDING_TIMEOUT_SECONDS,
     COMMAND_REFRESH_DELAYS,
+    DEFAULT_IMEI,
     DOMAIN,
     IGNITION_BLOCKED_COMMANDS,
 )
@@ -52,6 +53,10 @@ class VegaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     @callback
     def push(self, data: dict[str, Any]) -> None:
         """Runtime update callback: resolve pending commands, then publish."""
+        learned = data.get("learned_imei")
+        if (not self.imei or self.imei == DEFAULT_IMEI) and learned and learned != DEFAULT_IMEI:
+            self.imei = str(learned)
+            self.device_name = f"Vega {self.imei}"
         self._resolve_pending(data)
         self.async_set_updated_data(data)
 

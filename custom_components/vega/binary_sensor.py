@@ -3,11 +3,11 @@ from __future__ import annotations
 
 from homeassistant.components.binary_sensor import BinarySensorEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import BINARY_SENSOR_TYPES, DOMAIN
+from .const import BINARY_SENSOR_TYPES, DEFAULT_IMEI, DOMAIN
 from .coordinator import VegaCoordinator
 from .entity import build_device_info
 
@@ -17,10 +17,23 @@ async def async_setup_entry(
 ) -> None:
     """Set up Vega binary sensors."""
     coordinator: VegaCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities(
-        VegaBinarySensor(coordinator, key, name, device_class, state_key)
-        for key, (name, device_class, state_key) in BINARY_SENSOR_TYPES.items()
-    )
+    added = False
+
+    @callback
+    def _sync_binary_sensors() -> None:
+        nonlocal added
+        if added:
+            return
+        if not coordinator.imei or coordinator.imei == DEFAULT_IMEI:
+            return
+        added = True
+        async_add_entities(
+            VegaBinarySensor(coordinator, key, name, device_class, state_key)
+            for key, (name, device_class, state_key) in BINARY_SENSOR_TYPES.items()
+        )
+
+    _sync_binary_sensors()
+    entry.async_on_unload(coordinator.async_add_listener(_sync_binary_sensors))
 
 
 class VegaBinarySensor(CoordinatorEntity, BinarySensorEntity):

@@ -5,11 +5,11 @@ from typing import Any
 
 from homeassistant.components.device_tracker import SourceType, TrackerEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from .const import DEFAULT_IMEI, DOMAIN
 from .coordinator import VegaCoordinator
 from .entity import build_device_info
 
@@ -19,7 +19,20 @@ async def async_setup_entry(
 ) -> None:
     """Set up the Vega device tracker."""
     coordinator: VegaCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities([VegaDeviceTracker(coordinator)])
+    added = False
+
+    @callback
+    def _sync_tracker() -> None:
+        nonlocal added
+        if added:
+            return
+        if not coordinator.imei or coordinator.imei == DEFAULT_IMEI:
+            return
+        added = True
+        async_add_entities([VegaDeviceTracker(coordinator)])
+
+    _sync_tracker()
+    entry.async_on_unload(coordinator.async_add_listener(_sync_tracker))
 
 
 class VegaDeviceTracker(CoordinatorEntity, TrackerEntity):

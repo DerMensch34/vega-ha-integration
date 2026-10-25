@@ -7,13 +7,13 @@ from typing import Any as _Any
 
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN, SENSOR_TYPES
+from .const import DEFAULT_IMEI, DOMAIN, SENSOR_TYPES
 from .coordinator import VegaCoordinator
 from .entity import build_device_info
 
@@ -25,9 +25,22 @@ async def async_setup_entry(
 ) -> None:
     """Set up Vega sensors."""
     coordinator: VegaCoordinator = hass.data[DOMAIN][entry.entry_id]
-    entities = [VegaSensor(coordinator, key, *spec) for key, spec in SENSOR_TYPES.items()]
-    entities.append(VegaScriptsSensor(coordinator))
-    async_add_entities(entities)
+    added = False
+
+    @callback
+    def _sync_sensors() -> None:
+        nonlocal added
+        if added:
+            return
+        if not coordinator.imei or coordinator.imei == DEFAULT_IMEI:
+            return
+        added = True
+        entities = [VegaSensor(coordinator, key, *spec) for key, spec in SENSOR_TYPES.items()]
+        entities.append(VegaScriptsSensor(coordinator))
+        async_add_entities(entities)
+
+    _sync_sensors()
+    entry.async_on_unload(coordinator.async_add_listener(_sync_sensors))
 
 
 class VegaScriptsSensor(CoordinatorEntity, SensorEntity):

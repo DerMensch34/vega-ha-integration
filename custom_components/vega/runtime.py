@@ -18,7 +18,7 @@ from typing import Any, Callable
 from homeassistant.core import HomeAssistant
 
 from . import protocol
-from .const import ONLINE_TIMEOUT, SENSOR_KEY_MAP
+from .const import DEFAULT_IMEI, ONLINE_TIMEOUT, SENSOR_KEY_MAP
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -193,6 +193,7 @@ class VegaRuntime:
         self.direct_control = direct_control
         self.upstream = upstream
         self.learned_pin = learned_pin
+        self.learned_imei = learned_imei or ""
         self._persist_cb = persist_cb
 
         self._server: asyncio.AbstractServer | None = None
@@ -273,7 +274,7 @@ class VegaRuntime:
         if last_seen:
             data["last_online"] = time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime(last_seen))
         # onboarding diagnostics
-        data["learned_imei"] = self._wialon_imei or self.imei
+        data["learned_imei"] = self.imei if (self.imei and self.imei != DEFAULT_IMEI) else (self._wialon_imei or self.learned_imei or self.imei)
         data["pin_learned"] = bool(self.learned_pin)
         if self.proxy_mode and self.direct_control:
             data["mode"] = "proxy+direct"
@@ -379,6 +380,8 @@ class VegaRuntime:
         _LOGGER.info("Vega binary session from %s", peer)
         try:
             await session.send_raw(protocol.build_auth_frame(self._auth_pin))
+            if not self.imei or self.imei == DEFAULT_IMEI:
+                await session.send_raw(protocol.build_frame(protocol.CMD_GET_DEV_INF, b""))
         except Exception as err:  # noqa: BLE001
             _LOGGER.warning("Vega: error sending auth to %s: %s", peer, err)
 
@@ -432,6 +435,10 @@ class VegaRuntime:
                 req_id = struct.unpack("<I", payload[:4])[0]
                 ans = struct.pack("<IBB", req_id, 0x00, 0)
                 await session.send_raw(protocol.build_frame(protocol.CMD_COMMAND_ANS, ans))
+        elif cmd == protocol.CMD_GET_DEV_INF_ANS:
+            imei = protocol.parse_imei(payload)
+            if imei:
+                self._learn(imei=imei)
         elif cmd == protocol.CMD_GET_FILE:
             if len(payload) >= 4:
                 req_id = struct.unpack("<I", payload[:4])[0]
@@ -472,6 +479,12 @@ class VegaRuntime:
             "Vega proxy: relaying %s <-> %s:%s (direct_control=%s)",
             peer, *self.upstream, self.direct_control,
         )
+        if not self.imei or self.imei == DEFAULT_IMEI:
+            try:
+                writer.write(protocol.build_frame(protocol.CMD_GET_DEV_INF, b""))
+                await writer.drain()
+            except Exception:  # noqa: BLE001
+                pass
         if initial:
             up_writer.write(initial)
             await up_writer.drain()
@@ -583,9 +596,13 @@ class VegaRuntime:
             self.learned_pin = pin
             changed["learned_pin"] = pin
             _LOGGER.info("Vega proxy: learned PIN for this slot")
-        if imei:
+        if imei and imei != self.learned_imei and imei != DEFAULT_IMEI:
             self._wialon_imei = imei
+            self.imei = imei
+            self.learned_imei = imei
             changed["learned_imei"] = imei
+            changed["imei"] = imei
+            _LOGGER.info("Vega: learned tracker IMEI: %s", imei)
         if changed and self._persist_cb is not None:
             try:
                 self._persist_cb(changed)
@@ -636,6 +653,8 @@ class VegaRuntime:
             else:
                 self._wialon_imei = parts[0] if parts else ""
             await _send(b"#AL#1\r\n")
+            if self._wialon_imei and self._wialon_imei != DEFAULT_IMEI:
+                self._learn(imei=self._wialon_imei)
             return
         if line.startswith("#P#"):
             await _send(b"#AP#\r\n")

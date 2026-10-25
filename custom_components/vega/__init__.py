@@ -136,14 +136,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     def _persist(changed: dict) -> None:
         """Save learned PIN/IMEI back into the entry so they survive restarts."""
-        data = {**entry.data}
+        cur = hass.config_entries.async_get_entry(entry.entry_id)
+        if not cur:
+            entries = hass.config_entries.async_entries(DOMAIN)
+            if entries:
+                cur = entries[0]
+        if not cur:
+            return
+        data = {**cur.data}
         if "learned_pin" in changed:
             data[CONF_LEARNED_PIN] = changed["learned_pin"]
         if "learned_imei" in changed:
             data[CONF_LEARNED_IMEI] = changed["learned_imei"]
             if not data.get(CONF_IMEI) or data.get(CONF_IMEI) == DEFAULT_IMEI:
                 data[CONF_IMEI] = changed["learned_imei"]
-        hass.config_entries.async_update_entry(entry, data=data)
+        if "imei" in changed:
+            data[CONF_IMEI] = changed["imei"]
+        hass.config_entries.async_update_entry(cur, data=data)
 
     if not entry.data.get(CONF_IMEI) and imei != DEFAULT_IMEI:
         hass.config_entries.async_update_entry(entry, data={**entry.data, CONF_IMEI: imei})
