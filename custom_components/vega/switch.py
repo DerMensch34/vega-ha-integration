@@ -6,6 +6,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
     CONF_DIRECT_CONTROL,
@@ -47,13 +48,24 @@ async def async_setup_entry(
     entry.async_on_unload(coordinator.async_add_listener(_sync_switches))
 
 
-class VegaSwitch(SwitchEntity):
-    """A config toggle stored in the entry options; a change reloads the entry."""
+class VegaSwitch(CoordinatorEntity, SwitchEntity):
+    """A config toggle stored in the entry options; updates runtime dynamically."""
 
     _attr_entity_category = EntityCategory.CONFIG
 
-    def __init__(self, coordinator, entry, key, name, icon, opt_key, default):
+    def __init__(
+        self,
+        coordinator: VegaCoordinator,
+        entry: ConfigEntry,
+        key: str,
+        name: str,
+        icon: str,
+        opt_key: str,
+        default: bool,
+    ) -> None:
+        super().__init__(coordinator)
         self._entry = entry
+        self._key = key
         self._opt_key = opt_key
         self._default = default
         self._attr_name = name
@@ -64,15 +76,27 @@ class VegaSwitch(SwitchEntity):
 
     @property
     def is_on(self) -> bool:
-        # options win, then entry data, then the mode default (proxy on, direct off)
+        if self._key == "direct_control":
+            return bool(self.coordinator.runtime.direct_control)
+        if self._key == "proxy_mode":
+            return bool(self.coordinator.runtime.proxy_mode)
         if self._opt_key in self._entry.options:
             return bool(self._entry.options[self._opt_key])
         return bool(self._entry.data.get(self._opt_key, self._default))
 
     async def _set(self, value: bool) -> None:
-        options = {**self._entry.options, self._opt_key: value}
-        self.hass.config_entries.async_update_entry(self._entry, options=options)
-        # the entry's update listener reloads the integration with the new mode
+        if self._key == "direct_control":
+            self.coordinator.runtime.direct_control = value
+        elif self._key == "proxy_mode":
+            self.coordinator.runtime.proxy_mode = value
+
+        cur = self.hass.config_entries.async_get_entry(self._entry.entry_id) or self._entry
+        options = {**cur.options, self._opt_key: value}
+        self.hass.config_entries.async_update_entry(cur, options=options)
+
+        self.coordinator.runtime._publish()
+        self.coordinator.async_update_listeners()
+        self.async_write_ha_state()
 
     async def async_turn_on(self, **kwargs) -> None:
         await self._set(True)

@@ -263,6 +263,8 @@ class VegaRuntime:
     def snapshot(self) -> dict:
         now = time.time()
         last_vega = max((s.last_seen for s in self._vega_sessions.values()), default=0.0)
+        if self._inject_session:
+            last_vega = max(last_vega, self._inject_session.last_seen)
         last_seen = max(last_vega, self._wialon_last_seen)
         is_online = (now - last_seen) < ONLINE_TIMEOUT if last_seen else False
 
@@ -502,6 +504,7 @@ class VegaRuntime:
                         break
                     up_writer.write(chunk)
                     await up_writer.drain()
+                    inject.last_seen = time.time()
                     self._wialon_last_seen = time.time()
                     pbuf.extend(chunk)
                     for cmd, payload in protocol.iter_frames(pbuf):

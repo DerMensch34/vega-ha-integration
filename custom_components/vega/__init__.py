@@ -225,5 +225,27 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def _async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Reload when options change (port / PIN / commands_enabled)."""
-    await hass.config_entries.async_reload(entry.entry_id)
+    """Handle options/data updates without reloading unless network settings change."""
+    coordinator: VegaCoordinator | None = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if not coordinator:
+        await hass.config_entries.async_reload(entry.entry_id)
+        return
+    runtime = coordinator.runtime
+
+    # Update runtime flags dynamically without dropping live socket
+    runtime.direct_control = bool(_opt(entry, CONF_DIRECT_CONTROL, DEFAULT_DIRECT_CONTROL))
+    runtime.proxy_mode = bool(_opt(entry, CONF_PROXY_MODE, DEFAULT_PROXY_MODE))
+    runtime.poll_interval = int(_opt(entry, CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL))
+
+    # Port or upstream change requires restarting the TCP listener
+    new_port = int(_opt(entry, CONF_PORT, DEFAULT_PORT))
+    new_upstream = (
+        str(_opt(entry, CONF_UPSTREAM_HOST, DEFAULT_UPSTREAM_HOST)),
+        int(_opt(entry, CONF_UPSTREAM_PORT, DEFAULT_UPSTREAM_PORT)),
+    )
+    if new_port != runtime.port or new_upstream != runtime.upstream:
+        await hass.config_entries.async_reload(entry.entry_id)
+        return
+
+    runtime._publish()
+    coordinator.async_update_listeners()
