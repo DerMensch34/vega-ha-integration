@@ -121,6 +121,7 @@ class InjectionSession:
         self.writer = writer
         self.lock = lock
         self.authenticated = True  # piggybacks the cloud's auth on this session
+        self.authenticated_event = asyncio.Event()
         self.last_seen = time.time()
         self.req_counter = 0x50000000
         self.pending_requests: dict[int, asyncio.Future] = {}
@@ -479,12 +480,6 @@ class VegaRuntime:
             "Vega proxy: relaying %s <-> %s:%s (direct_control=%s)",
             peer, *self.upstream, self.direct_control,
         )
-        if not self.imei or self.imei == DEFAULT_IMEI:
-            try:
-                writer.write(protocol.build_frame(protocol.CMD_GET_DEV_INF, b""))
-                await writer.drain()
-            except Exception:  # noqa: BLE001
-                pass
         if initial:
             up_writer.write(initial)
             await up_writer.drain()
@@ -550,7 +545,12 @@ class VegaRuntime:
 
     async def _inject_poll_loop(self, inject: "InjectionSession") -> None:
         """Poll sensors by injecting queries into the relayed (cloud-authed) session."""
-        await asyncio.sleep(1.0)
+        try:
+            # Wait for cloud authorization before injecting queries
+            await asyncio.wait_for(inject.authenticated_event.wait(), timeout=15.0)
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            return
+        await asyncio.sleep(2.0)
         while True:
             try:
                 changed = False
@@ -573,6 +573,10 @@ class VegaRuntime:
             pin = protocol.parse_authorization_pin(payload)
             if pin and pin != self.learned_pin:
                 self._learn(pin=pin)
+        elif direction == "t2c" and cmd == protocol.CMD_AUTORIZATION_ANS:
+            status = payload[0] if payload else 0
+            if status == 0x01 and inject is not None:
+                inject.authenticated_event.set()
         elif direction == "t2c" and cmd == protocol.CMD_GET_DEV_INF_ANS:
             imei = protocol.parse_imei(payload)
             if imei:
