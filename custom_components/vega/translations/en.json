@@ -1,0 +1,35 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Vega MT X CAN",
+        "description": "The Vega tracker connects to this Home Assistant host directly. Point the tracker's Setting 3001 server slot to this host and the port below. Commands are OFF by default — no setting is written to the vehicle until you enable them in the integration options.",
+        "data": {
+          "imei": "Tracker IMEI",
+          "port": "Listen Port",
+          "pin": "Server 1 PIN",
+          "pin2": "Server 2 PIN (fallback)",
+          "poll_interval": "Telemetry Poll Interval (s)",
+          "commands_enabled": "Enable commands (writes to vehicle)"
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "This tracker is already configured"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Vega options",
+        "data": {
+          "port": "Listen Port",
+          "pin": "Server 1 PIN",
+          "pin2": "Server 2 PIN (fallback)",
+          "poll_interval": "Telemetry Poll Interval (s)",
+          "commands_enabled": "Enable commands (writes to vehicle)"
+        }
+      }
+    }
+  }
+}

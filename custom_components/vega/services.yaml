@@ -1,0 +1,29 @@
+read_can_scripts:
+  name: Read CAN scripts
+  description: >-
+    Read the tracker's Setting 5502 CAN-script slots into the integration and
+    config/vega/can_scripts_<imei>.json. Also refreshes the command-button labels.
+
+write_can_script:
+  name: Write CAN script
+  description: >-
+    Build a CAN-script buffer from a decoded spec and write it to a tracker slot.
+    Requires Direct Control to be on (writes to the vehicle).
+  fields:
+    slot:
+      name: Slot
+      description: Setting 5502 sub-id (slot index).
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 15
+          mode: box
+    script:
+      name: Script
+      description: >-
+        {"name": "...", "repeat": 1, "frames": [{"delay_ms": 2000, "can_id": 916,
+        "bus": 2, "data": "fcff0fff001ff000"}, ...]}
+      required: true
+      selector:
+        object:

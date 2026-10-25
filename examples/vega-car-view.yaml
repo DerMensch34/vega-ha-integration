@@ -1,0 +1,285 @@
+# Vega — вкладка (view) дашборда Home Assistant.
+# Замените IMEI 000000000000000 на ваш реальный IMEI трекера.
+# Схема машины переиспользует SVG из /local/evolute/.
+# Добавляется через Raw configuration editor дашборда (внутри списка views:).
+
+type: panel
+path: vega
+title: Vega
+icon: mdi:car-connected
+cards:
+  - type: vertical-stack
+    cards:
+      # Ряд 1: температура и общий статус
+      - type: horizontal-stack
+        cards:
+          - type: tile
+            entity: sensor.vega_000000000000000_outside_temp
+            name: На улице
+            icon: mdi:thermometer
+          - type: tile
+            entity: sensor.vega_000000000000000_battery_percentage
+            name: Заряд
+            icon: mdi:battery
+          - type: tile
+            entity: binary_sensor.vega_000000000000000_online
+            name: Связь
+            icon: mdi:car-connected
+
+      # Ряд 2: левая колонка / схема машины / правая колонка
+      - type: horizontal-stack
+        cards:
+          - type: vertical-stack
+            cards:
+              - type: tile
+                entity: sensor.vega_000000000000000_battery_voltage
+                name: 12В АКБ
+                icon: mdi:car-battery
+                vertical: false
+              - type: tile
+                entity: sensor.vega_000000000000000_remains_mileage
+                name: Запас хода
+                icon: mdi:map-marker-distance
+                vertical: false
+              - type: tile
+                entity: sensor.vega_000000000000000_signal_level
+                name: GSM
+                icon: mdi:signal-cellular-3
+                vertical: false
+
+          - type: picture-elements
+            image: /local/evolute/car-full.svg
+            elements:
+              # Синий контур = центральный замок заперт
+              - type: conditional
+                conditions:
+                  - entity: binary_sensor.vega_000000000000000_central_lock
+                    state: "off"
+                elements:
+                  - type: image
+                    image: /local/evolute/car-perimeter.svg
+                    style:
+                      top: 50%
+                      left: 50%
+                      width: 100%
+                      height: 100%
+                      transform: translate(-50%, -50%)
+                      pointer-events: none
+              # Багажник открыт
+              - type: conditional
+                conditions:
+                  - entity: binary_sensor.vega_000000000000000_trunk
+                    state: "on"
+                elements:
+                  - type: image
+                    image: /local/evolute/door-trunk-open.svg
+                    style: {top: 0, left: 0, width: 100%, height: 100%, pointer-events: none}
+              # Двери
+              - type: conditional
+                conditions:
+                  - entity: binary_sensor.vega_000000000000000_door_fl
+                    state: "on"
+                elements:
+                  - type: image
+                    image: /local/evolute/door-fl-open.svg
+                    style: {top: 0, left: 0, width: 100%, height: 100%, pointer-events: none}
+              - type: conditional
+                conditions:
+                  - entity: binary_sensor.vega_000000000000000_door_fr
+                    state: "on"
+                elements:
+                  - type: image
+                    image: /local/evolute/door-fr-open.svg
+                    style: {top: 0, left: 0, width: 100%, height: 100%, pointer-events: none}
+              - type: conditional
+                conditions:
+                  - entity: binary_sensor.vega_000000000000000_door_rl
+                    state: "on"
+                elements:
+                  - type: image
+                    image: /local/evolute/door-rl-open.svg
+                    style: {top: 0, left: 0, width: 100%, height: 100%, pointer-events: none}
+              - type: conditional
+                conditions:
+                  - entity: binary_sensor.vega_000000000000000_door_rr
+                    state: "on"
+                elements:
+                  - type: image
+                    image: /local/evolute/door-rr-open.svg
+                    style: {top: 0, left: 0, width: 100%, height: 100%, pointer-events: none}
+              # Иконка замка (виден, когда заперт)
+              - type: conditional
+                conditions:
+                  - entity: binary_sensor.vega_000000000000000_central_lock
+                    state: "off"
+                elements:
+                  - type: icon
+                    icon: mdi:lock-outline
+                    style: {top: 8%, left: 30%, color: "#00c0fc", "--mdc-icon-size": 26px, opacity: 0.9}
+              # Иконка зажигания
+              - type: conditional
+                conditions:
+                  - entity: binary_sensor.vega_000000000000000_ignition
+                    state: "on"
+                elements:
+                  - type: icon
+                    icon: mdi:engine
+                    style: {top: 8%, left: 70%, color: var(--state-active-color), "--mdc-icon-size": 26px, opacity: 1}
+              # Температура снаружи по центру
+              - type: state-label
+                entity: sensor.vega_000000000000000_outside_temp
+                suffix: "°C"
+                style:
+                  top: 45%
+                  left: 50%
+                  color: var(--primary-text-color)
+                  font-size: 12px
+                  font-weight: bold
+                  text-shadow: 2px 2px 4px rgba(0,0,0,0.8)
+
+          - type: vertical-stack
+            cards:
+              - type: tile
+                entity: sensor.vega_000000000000000_odometer
+                name: Пробег
+                icon: mdi:counter
+                vertical: false
+              - type: tile
+                entity: sensor.vega_000000000000000_speed
+                name: Скорость
+                icon: mdi:speedometer
+                vertical: false
+              - type: tile
+                entity: binary_sensor.vega_000000000000000_ignition
+                name: Зажигание
+                icon: mdi:key
+                vertical: false
+
+      # Ряд 3: управление — hold-to-confirm карточки (как у evolute), с защитой от
+      # случайного нажатия и блокировками (серые/ругаются, если недоступно).
+      # Карточка custom:vega-hold-button bundled интеграцией vega (www/vega).
+      # name не задаём — подпись берётся из имени сущности (= реальное имя слота
+      # трекера, прочитанное в Setting 5502).
+      - type: horizontal-stack
+        cards:
+          - type: custom:vega-hold-button
+            icon: mdi:lock
+            entity: button.vega_000000000000000_lock
+            state_entity: binary_sensor.vega_000000000000000_central_lock
+            state_labels: {on: Отперт, off: Заперт}
+          - type: custom:vega-hold-button
+            icon: mdi:lock-open
+            entity: button.vega_000000000000000_unlock
+            state_entity: binary_sensor.vega_000000000000000_central_lock
+            state_labels: {on: Отперт, off: Заперт}
+          - type: custom:vega-hold-button
+            icon: mdi:radiator
+            entity: button.vega_000000000000000_preheat
+          - type: custom:vega-hold-button
+            icon: mdi:snowflake
+            entity: button.vega_000000000000000_cooling
+      - type: horizontal-stack
+        cards:
+          - type: custom:vega-hold-button
+            icon: mdi:car-connected
+            entity: button.vega_000000000000000_remote_on
+          - type: custom:vega-hold-button
+            icon: mdi:car-off
+            entity: button.vega_000000000000000_remote_off
+          - type: custom:vega-hold-button
+            icon: mdi:bullhorn
+            entity: button.vega_000000000000000_horn
+            require_hold: false
+
+      # Двери и багажник
+      - type: entities
+        title: Двери и багажник
+        entities:
+          - entity: binary_sensor.vega_000000000000000_door_fl
+          - entity: binary_sensor.vega_000000000000000_door_fr
+          - entity: binary_sensor.vega_000000000000000_door_rl
+          - entity: binary_sensor.vega_000000000000000_door_rr
+          - entity: binary_sensor.vega_000000000000000_trunk
+          - entity: binary_sensor.vega_000000000000000_central_lock
+
+      # Климат
+      - type: entities
+        title: Климат
+        entities:
+          - entity: sensor.vega_000000000000000_climate_target_temp
+          - entity: sensor.vega_000000000000000_inboard_temp
+
+      # Батарея и температуры
+      - type: entities
+        title: Батарея и температуры
+        entities:
+          - entity: sensor.vega_000000000000000_battery_temp
+          - entity: sensor.vega_000000000000000_coolant_temp
+          - entity: sensor.vega_000000000000000_fuel_percentage
+          - entity: sensor.vega_000000000000000_remains_mileage_fuel
+          - entity: sensor.vega_000000000000000_backup_battery
+          - entity: sensor.vega_000000000000000_tracker_temp
+
+      # CAN-скрипты (Setting 5502): просмотр/правка слотов и запись в трекер.
+      # Карточка custom:vega-can-editor bundled интеграцией vega (www/vega).
+      # Читает слоты из атрибута slots сенсора can_scripts; «Прочитать из трекера»
+      # вызывает vega.read_can_scripts, «Записать» — vega.write_can_script
+      # (нужен включённый Direct Control).
+      - type: custom:vega-can-editor
+        entity: sensor.vega_000000000000000_can_scripts
+
+      # Карта (Google Map Card из /map/map)
+      - type: custom:google-map-card
+        api_key: YOUR_GOOGLE_MAPS_API_KEY
+        cameraControl: false
+        zoomControl: false
+        streetViewControl: true
+        streetViewControl_position: RIGHT_BOTTOM
+        fullscreenControl: true
+        fullscreenControl_position: TOP_RIGHT
+        mapTypeControl: true
+        mapTypeControl_position: TOP_LEFT
+        rotateControl: true
+        rotateControl_position: LEFT_BOTTOM
+        show_traffic_button: true
+        show_traffic_button_position: TOP_RIGHT
+        show_weather_button: true
+        show_weather_button_position: TOP_RIGHT
+        show_recenter_button: true
+        show_recenter_button_position: LEFT_BOTTOM
+        show_datepicker_button: true
+        buttons_opacity: 1
+        zone_opacity: 0.4
+        zone_label_opacity: 1
+        showScale: true
+        keyboardShortcuts: false
+        gesture_handling: greedy
+        marker_clustering: false
+        allow_open_google_maps: true
+        proximity_clustering: false
+        proximity_radius: 150
+        spiderfy: true
+        show_traffic: false
+        weather_layer: none
+        zones:
+          zone.home:
+            show: false
+            color: "#3498db"
+            follow: false
+            label_color: "#c4dbf9"
+        zoom: 13
+        map_type: roadmap
+        entities:
+          - entity: device_tracker.vega_000000000000000
+            icon_size: 24
+            polyline_color: "#ff3366"
+            polyline_width: 3
+            icon_color: "#00e676"
+            background_color: "#ffffff"
+            show_history_dots: true
+            hours_to_show: 24
+            history_start_date: null
+            history_end_date: null
+            use_date_range: true
+        history_preset: today
+        show_playback_button: true
