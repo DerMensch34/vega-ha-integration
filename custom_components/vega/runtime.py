@@ -551,6 +551,17 @@ class VegaRuntime:
         except (asyncio.TimeoutError, asyncio.CancelledError):
             return
         await asyncio.sleep(2.0)
+
+        # If IMEI is still unknown, query device info now that we are authenticated
+        if not self.imei or self.imei == DEFAULT_IMEI:
+            try:
+                async with inject.lock:
+                    inject.writer.write(protocol.build_frame(protocol.CMD_GET_DEV_INF, b""))
+                    await inject.writer.drain()
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.debug("Vega: query IMEI failed: %s", err)
+            await asyncio.sleep(1.0)
+
         while True:
             try:
                 changed = False
@@ -569,6 +580,7 @@ class VegaRuntime:
                 await asyncio.sleep(self.poll_interval)
 
     def _capture(self, direction: str, cmd: int, payload: bytes, inject: "InjectionSession | None" = None) -> None:
+        _LOGGER.debug("Vega capture [%s]: cmd=0x%02X len=%d", direction, cmd, len(payload))
         if direction == "c2t" and cmd == protocol.CMD_AUTORIZATION:
             pin = protocol.parse_authorization_pin(payload)
             if pin and pin != self.learned_pin:
@@ -576,6 +588,7 @@ class VegaRuntime:
         elif direction == "t2c" and cmd == protocol.CMD_AUTORIZATION_ANS:
             status = payload[0] if payload else 0
             if status == 0x01 and inject is not None:
+                _LOGGER.info("Vega: cloud authentication confirmed, starting telemetry polling")
                 inject.authenticated_event.set()
         elif direction == "t2c" and cmd == protocol.CMD_GET_DEV_INF_ANS:
             imei = protocol.parse_imei(payload)
