@@ -493,12 +493,10 @@ class VegaRuntime:
         # the tracker (shared writer, locked) and matches replies in the t2c pipe.
         tracker_lock = asyncio.Lock()
         inject = InjectionSession(writer, tracker_lock)
-        poll_task = None
-        if self.direct_control:
-            self._inject_session = inject
-            poll_task = self.hass.async_create_background_task(
-                self._inject_poll_loop(inject), name="vega_inject_poll"
-            )
+        self._inject_session = inject
+        poll_task = self.hass.async_create_background_task(
+            self._inject_poll_loop(inject), name="vega_inject_poll"
+        )
 
         async def t2c() -> None:  # tracker -> cloud (relay + capture + resolve inject)
             pbuf = bytearray()
@@ -552,9 +550,9 @@ class VegaRuntime:
 
     async def _inject_poll_loop(self, inject: "InjectionSession") -> None:
         """Poll sensors by injecting queries into the relayed (cloud-authed) session."""
+        await asyncio.sleep(1.0)
         while True:
             try:
-                await asyncio.sleep(self.poll_interval)
                 changed = False
                 for sid in protocol.SENSOR_DEFS:
                     sensor = await inject.query_sensor(sid, 0)
@@ -563,10 +561,12 @@ class VegaRuntime:
                         changed = True
                 if changed:
                     self._publish()
+                await asyncio.sleep(self.poll_interval)
             except asyncio.CancelledError:
-                raise
+                break
             except Exception as err:  # noqa: BLE001
                 _LOGGER.debug("Vega inject poll error: %s", err)
+                await asyncio.sleep(self.poll_interval)
 
     def _capture(self, direction: str, cmd: int, payload: bytes, inject: "InjectionSession | None" = None) -> None:
         if direction == "c2t" and cmd == protocol.CMD_AUTORIZATION:
@@ -603,6 +603,7 @@ class VegaRuntime:
             changed["learned_imei"] = imei
             changed["imei"] = imei
             _LOGGER.info("Vega: learned tracker IMEI: %s", imei)
+            self.load_scripts()
         if changed and self._persist_cb is not None:
             try:
                 self._persist_cb(changed)
@@ -680,26 +681,27 @@ class VegaRuntime:
     # --- poll loop + command path -------------------------------------------
 
     async def _poll_loop(self) -> None:
+        await asyncio.sleep(1.0)
         while True:
             try:
-                await asyncio.sleep(self.poll_interval)
                 session = self._active_vega_session()
-                if session is None:
-                    continue
-                changed = False
-                for sid in protocol.SENSOR_DEFS:
-                    sensor = await session.query_sensor(sid, 0)
-                    if sensor is not None:
-                        self._ingest_sensor(sensor)
-                        changed = True
-                if self.direct_control:
-                    await self._remote_state_watchdog(session)
-                if changed:
-                    self._publish()
+                if session is not None:
+                    changed = False
+                    for sid in protocol.SENSOR_DEFS:
+                        sensor = await session.query_sensor(sid, 0)
+                        if sensor is not None:
+                            self._ingest_sensor(sensor)
+                            changed = True
+                    if self.direct_control:
+                        await self._remote_state_watchdog(session)
+                    if changed:
+                        self._publish()
+                await asyncio.sleep(self.poll_interval)
             except asyncio.CancelledError:
                 raise
             except Exception as err:  # noqa: BLE001
                 _LOGGER.debug("Vega poll loop error: %s", err)
+                await asyncio.sleep(self.poll_interval)
 
     async def _remote_state_watchdog(self, session: VegaSession) -> None:
         """Clear the levelled output 1341 when a Remote session ends by timer.
