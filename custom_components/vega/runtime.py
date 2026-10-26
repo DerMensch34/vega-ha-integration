@@ -16,6 +16,7 @@ import time
 from typing import Any, Callable
 
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 
 from . import protocol
 from .const import DEFAULT_IMEI, ONLINE_TIMEOUT, SENSOR_KEY_MAP
@@ -44,7 +45,7 @@ def demux_protocol(prefix: bytes) -> str:
     return "vega"
 
 
-class CommandError(Exception):
+class CommandError(HomeAssistantError):
     """Raised when a command cannot be dispatched to the vehicle."""
 
 
@@ -216,6 +217,9 @@ class VegaRuntime:
         self._inject_session: InjectionSession | None = None  # active proxy injection
         self._can_scripts: list[dict] = []  # decoded Setting 5502 slots
         self._slot_names: dict[int, str] = {}  # slot index -> name (for button labels)
+        self._scripts_lock = asyncio.Lock()
+        self._scenarios: list[dict] = []
+        self._scenario_read_at: str | None = None
 
     @property
     def _auth_pin(self) -> str:
@@ -772,11 +776,33 @@ class VegaRuntime:
     def can_scripts(self) -> list[dict]:
         return self._can_scripts
 
+    @property
+    def scenarios(self) -> list[dict]:
+        return self._scenarios
+
+    @property
+    def command_bindings(self) -> dict:
+        return protocol.command_script_bindings(self._scenarios if self._scenario_read_at else [])
+
+    @property
+    def scenario_read_at(self) -> str | None:
+        return self._scenario_read_at
+
+    def command_slot(self, action: str) -> int | None:
+        binding = self.command_bindings.get(action, {})
+        if binding.get("status") == "single":
+            return binding["slots"][0]
+        return None
+
     def _scripts_path(self) -> str:
         return os.path.join(self.hass.config.path("vega"), f"can_scripts_{self.imei}.json")
 
     def load_scripts(self) -> None:
         """Load the last-saved scripts from disk so labels survive a restart."""
+        self._can_scripts = []
+        self._slot_names = {}
+        self._scenarios = []
+        self._scenario_read_at = None
         try:
             path = self._scripts_path()
             if os.path.exists(path):
@@ -803,56 +829,339 @@ class VegaRuntime:
 
         def _write() -> None:
             os.makedirs(os.path.dirname(path), exist_ok=True)
-            with open(path, "w", encoding="utf-8") as f:
+            with open(path + ".tmp", "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
+            os.replace(path + ".tmp", path)
 
         try:
             await self.hass.async_add_executor_job(_write)
         except Exception as err:  # noqa: BLE001
             _LOGGER.debug("Vega: persist scripts failed: %s", err)
 
-    async def async_read_can_scripts(self, slots: int = 8) -> list[dict]:
-        """Read Setting 5502 slots from the tracker, decode, store and persist."""
+    def _script_session(self):
         session = self._inject_session or self._active_vega_session()
         if session is None:
             raise CommandError("Vehicle is offline (no active Vega session)")
-        scripts: list[dict] = []
-        names: dict[int, str] = {}
-        for slot in range(slots):
-            sensor = await session.query_sensor(5502, slot)
-            hx = (sensor or {}).get("raw_hex", "")
-            if not hx:
-                continue
-            buf = bytes.fromhex(hx)
-            if len(buf) < 82:
-                continue  # empty slot
-            dec = protocol.decode_can_script(buf)
-            dec["slot"] = slot
-            scripts.append(dec)
-            if dec.get("name"):
-                names[slot] = dec["name"]
-        self._can_scripts = scripts
-        self._slot_names = names
-        await self._persist_scripts()
-        self._publish()
-        _LOGGER.info("Vega: read %d CAN script slot(s)", len(scripts))
-        return scripts
+        return session
 
-    async def async_write_can_script(self, slot: int, spec: dict) -> dict:
-        """Build a 5502 buffer from a decoded-shape dict and write it to the tracker."""
-        if not self.direct_control:
-            raise CommandError("Direct control is off; enable it before writing scripts.")
-        session = self._inject_session or self._active_vega_session()
-        if session is None:
-            raise CommandError("Vehicle is offline (no active Vega session)")
-        buf = protocol.build_can_script_from_dict(spec)
-        if len(buf) != 82:
-            raise CommandError(f"built buffer has wrong length {len(buf)} (expected 82)")
-        res = await session.set_setting(5502, int(slot), buf)
-        if not res.get("success"):
-            raise CommandError(f"Writing slot {slot} was not accepted: {res}")
-        _LOGGER.info("Vega: wrote CAN script slot %s (%s)", slot, spec.get("name"))
-        return res
+    @staticmethod
+    async def _read_setting(session, setting: int, sub: int, size: int) -> bytes:
+        sensor = await session.query_sensor(setting, sub)
+        if not sensor or sensor.get("id") != setting:
+            raise CommandError(f"Нет корректного ответа на чтение {setting}/{sub}")
+        try:
+            buf = bytes.fromhex(sensor["raw_hex"])
+        except (KeyError, TypeError, ValueError) as err:
+            raise CommandError(f"Некорректные данные {setting}/{sub}") from err
+        if len(buf) != size:
+            raise CommandError(f"{setting}/{sub}: прочитано {len(buf)} байт вместо {size}")
+        return buf
+
+    def _store_script(self, slot: int, buf: bytes) -> None:
+        dec = protocol.decode_can_script(buf)
+        dec.update(slot=slot, read_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+        # Do not offer a lossy edit of a format this encoder cannot reproduce.
+        try:
+            dec["editable"] = protocol.build_can_script_from_dict(
+                {k: dec[k] for k in ("name", "repeat", "frames")}
+            ) == buf
+        except ValueError:
+            dec["editable"] = False
+        self._can_scripts = sorted(
+            [s for s in self._can_scripts if s["slot"] != slot] + [dec], key=lambda s: s["slot"]
+        )
+        self._slot_names[slot] = dec["name"]
+
+    async def async_read_can_scripts(self) -> list[dict]:
+        """Read scripts and all scenario routes. Never infer routes from slot names."""
+        async with self._scripts_lock:
+            self._scenarios = []
+            self._scenario_read_at = None
+            self._publish()
+            session = self._script_session()
+            scripts = []
+            for slot in range(protocol.CAN_SCRIPT_COUNT):
+                scripts.append(await self._read_setting(session, 5502, slot, protocol.CAN_SCRIPT_SIZE))
+            for slot, buf in enumerate(scripts):
+                self._store_script(slot, buf)
+            await self._persist_scripts()
+            self._publish()
+            # Script editing remains usable if the firmware cannot supply 4001.
+            # In that case the UI explicitly reports unknown command bindings.
+            try:
+                scenarios = []
+                for index in range(protocol.SCENARIO_COUNT):
+                    raw = await self._read_setting(session, 4001, index, 50)
+                    scenarios.append(protocol.decode_scenario(raw, index))
+                self._scenarios = scenarios
+                self._scenario_read_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                await self._persist_scenarios()
+            except (CommandError, ValueError, OSError) as err:
+                _LOGGER.warning("Vega: scripts read; scenario bindings unavailable: %s", err)
+            self._publish()
+            return self._can_scripts
+
+    async def _persist_scenarios(self) -> None:
+        path = self.hass.config.path("vega", f"scenarios_{self.imei}.json")
+        data = self._scenarios
+
+        def write():
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path + ".tmp", "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            os.replace(path + ".tmp", path)
+
+        try:
+            await self.hass.async_add_executor_job(write)
+        except OSError as err:
+            _LOGGER.warning("Vega: could not cache scenarios: %s", err)
+
+    def _store_config_record(self, key: str, raw: bytes | None) -> None:
+        setting, index = map(int, key.split("/"))
+        if setting == 5502:
+            if raw is not None:
+                self._store_script(index, raw)
+            else:
+                self._can_scripts = [s for s in self._can_scripts if s["slot"] != index]
+                self._slot_names.pop(index, None)
+            return
+        self._scenarios = [s for s in self._scenarios if s["index"] != index]
+        if raw is not None:
+            try:
+                self._scenarios.append(protocol.decode_scenario(raw, index))
+                self._scenarios.sort(key=lambda s: s["index"])
+            except ValueError:
+                self._scenario_read_at = None
+        else:
+            self._scenario_read_at = None
+
+    @staticmethod
+    def _prepare_command_edit(document: dict, expected: dict) -> tuple[dict, dict]:
+        """Validate the entire edit before sending any requests to the tracker."""
+        if not isinstance(document, dict) or not isinstance(expected, dict):
+            raise ValueError("document и expected должны быть объектами")
+        protocol._check_fields(document, {"scenarios", "scripts"}, set(), "document")
+        originals = {}
+        for key, value in expected.items():
+            if not isinstance(key, str):
+                raise ValueError("Некорректный ключ снимка")
+            parts = key.split("/")
+            if len(parts) != 2 or parts[0] not in ("4001", "5502") or not parts[1].isdigit():
+                raise ValueError("Ключ снимка: 4001/индекс или 5502/слот")
+            setting, index = map(int, parts)
+            limit, size = (25, 50) if setting == 4001 else (8, 82)
+            if not 0 <= index < limit or key != f"{setting}/{index}":
+                raise ValueError("Индекс снимка вне диапазона")
+            if not isinstance(value, str):
+                raise ValueError("Исходные данные должны быть HEX-строкой")
+            raw = bytes.fromhex(value)
+            if len(raw) != size:
+                raise ValueError(f"{key}: в снимке требуется {size} байт")
+            originals[key] = raw
+        requested = {}
+        for field, setting, index_key, maximum in (("scenarios", 4001, "index", 25), ("scripts", 5502, "slot", 8)):
+            items = document[field]
+            if not isinstance(items, list) or len(items) > maximum:
+                raise ValueError(f"{field}: требуется список, максимум {maximum}")
+            for item in items:
+                if not isinstance(item, dict) or index_key not in item:
+                    raise ValueError(f"{field}: отсутствует {index_key}")
+                index = protocol._integer(item[index_key], 0, maximum - 1, index_key)
+                key = f"{setting}/{index}"
+                if key in requested:
+                    raise ValueError(f"{key}: повторяется в документе")
+                if key not in originals:
+                    raise ValueError(f"{key}: перечитайте настройки, исходный снимок отсутствует")
+                spec = {k: v for k, v in item.items() if k != index_key}
+                if setting == 4001:
+                    # Refuse a baseline format the scenario decoder cannot explain.
+                    if not protocol.decode_scenario(originals[key], index)["editable"]:
+                        raise ValueError(f"{key}: неподдерживаемый формат сценария")
+                    requested[key] = protocol.build_scenario_from_dict(spec, originals[key])
+                    slot = spec["actions"]["can_script"]
+                    if slot is not None and f"5502/{slot}" not in originals:
+                        raise ValueError(f"Слот {slot}: нужен исходный снимок связанного CAN-скрипта")
+                else:
+                    original_spec = protocol.decode_can_script(originals[key])
+                    if protocol.build_can_script_from_dict(original_spec) != originals[key]:
+                        raise ValueError(f"{key}: формат CAN-скрипта нельзя сохранить без потерь")
+                    requested[key] = protocol.build_can_script_from_dict(spec)
+        if not requested:
+            raise ValueError("Нет сценариев или CAN-скриптов для сохранения")
+        return originals, requested
+
+    async def _backup_command_edit(self, changes: dict, originals: dict) -> None:
+        path = self.hass.config.path("vega", f"command_backups_{self.imei}.jsonl")
+        record = {"time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                  "records": {k: {"before": originals[k].hex(), "requested": v.hex()} for k, v in changes.items()}}
+
+        def write():
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(record) + "\n")
+                f.flush()
+                os.fsync(f.fileno())
+
+        try:
+            await self.hass.async_add_executor_job(write)
+        except OSError as err:
+            raise CommandError("Не удалось сохранить исходные настройки; запись отменена") from err
+
+    async def async_write_commands(self, document: dict, expected: dict) -> dict:
+        """Save a reviewed command document. No command execution or write retries.
+
+        The device has no multi-record transaction. All baselines are checked
+        and backed up first; scripts precede scenario references. A failure
+        stops remaining writes and explicitly reports already verified records.
+        """
+        try:
+            originals, requested = self._prepare_command_edit(document, expected)
+        except (ValueError, TypeError) as err:
+            raise CommandError(str(err)) from err
+        async with self._scripts_lock:
+            if not self.direct_control:
+                raise CommandError("Direct Control выключен")
+            session = self._script_session()
+            confirmed = []
+            attempted = None
+            try:
+                for key, before in originals.items():
+                    setting, index = map(int, key.split("/"))
+                    actual = await self._read_setting(session, setting, index, len(before))
+                    self._store_config_record(key, actual)
+                    if actual != before:
+                        self._scenario_read_at = None
+                        raise CommandError(f"{key}: настройки изменились после открытия редактора. Перечитайте их; запись отменена")
+                changes = {k: v for k, v in requested.items() if v != originals[k]}
+                if not changes:
+                    return {"verified": True, "unchanged": True, "written": []}
+                await self._backup_command_edit(changes, originals)
+                # Write referenced CAN content before changing scenario actions.
+                for key in sorted(changes, key=lambda k: (not k.startswith("5502/"), int(k.split("/")[1]))):
+                    if not self.direct_control:
+                        raise CommandError("Direct Control выключен; дальнейшая запись отменена")
+                    setting, index = map(int, key.split("/"))
+                    before, desired = originals[key], changes[key]
+                    current = await self._read_setting(session, setting, index, len(before))
+                    self._store_config_record(key, current)
+                    if current != before:
+                        raise CommandError(f"{key}: настройки изменились перед записью")
+                    if not self.direct_control:
+                        raise CommandError("Direct Control выключен; дальнейшая запись отменена")
+                    attempted = key
+                    try:
+                        await session.set_setting(setting, index, desired)
+                    except (OSError, asyncio.TimeoutError):
+                        pass  # A lost ACK can still accompany a successful write.
+                    actual = None
+                    for attempt in range(3):
+                        try:
+                            actual = await self._read_setting(session, setting, index, len(desired))
+                            if actual == desired:
+                                break
+                        except (CommandError, OSError, asyncio.TimeoutError):
+                            actual = None
+                        if attempt < 2:
+                            await asyncio.sleep(0.3)
+                    self._store_config_record(key, actual)
+                    if actual != desired:
+                        detail = "нет ответа на чтение" if actual is None else "прочитанные байты отличаются"
+                        raise CommandError(f"{key}: запись не подтверждена — {detail}")
+                    confirmed.append(key)
+                    attempted = None
+                return {"verified": True, "unchanged": False, "written": confirmed}
+            except (CommandError, OSError, asyncio.TimeoutError) as err:
+                self._scenario_read_at = None
+                done = ", ".join(confirmed) or "нет"
+                pending = f" Возможна неподтверждённая запись {attempted}." if attempted else ""
+                raise CommandError(f"{err}. Подтверждённые записи: {done}.{pending} Перечитайте настройки; черновик сохранён в редакторе") from err
+            except asyncio.CancelledError:
+                if attempted:
+                    self._store_config_record(attempted, None)
+                self._scenario_read_at = None
+                raise
+            finally:
+                await self._persist_scripts()
+                await self._persist_scenarios()
+                self._publish()
+
+    async def _backup_script(self, slot: int, before: bytes, requested: bytes) -> None:
+        path = self.hass.config.path("vega", f"can_script_backups_{self.imei}.jsonl")
+        record = {"time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                  "slot": slot, "before": before.hex(), "requested": requested.hex()}
+
+        def _write():
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(record) + "\n")
+                f.flush()
+                os.fsync(f.fileno())
+
+        try:
+            await self.hass.async_add_executor_job(_write)
+        except OSError as err:
+            raise CommandError("Не удалось сохранить исходный слот; запись отменена") from err
+
+    async def async_write_can_script(self, slot: int, spec: dict, expected_raw: str | None = None) -> dict:
+        """Write once, then confirm the complete slot by reading it back."""
+        try:
+            protocol.validate_script_slot(slot)
+            buf = protocol.build_can_script_from_dict(spec)
+            expected = bytes.fromhex(expected_raw) if expected_raw is not None else None
+            if expected is not None and len(expected) != protocol.CAN_SCRIPT_SIZE:
+                raise ValueError("expected_raw: ожидалось 82 байта")
+        except (ValueError, TypeError) as err:
+            raise CommandError(str(err)) from err
+        async with self._scripts_lock:
+            if not self.direct_control:
+                raise CommandError("Direct Control выключен")
+            session = self._script_session()
+            before = await self._read_setting(session, 5502, slot, protocol.CAN_SCRIPT_SIZE)
+            self._store_script(slot, before)
+            if expected is not None and expected != before:
+                await self._persist_scripts()
+                self._publish()
+                raise CommandError("Слот изменился после открытия редактора. Прочитайте его заново; запись отменена")
+            current = next(s for s in self._can_scripts if s["slot"] == slot)
+            if not current["editable"]:
+                await self._persist_scripts()
+                self._publish()
+                raise CommandError("Формат слота нельзя сохранить без потерь; запись отменена")
+            if before == buf:
+                await self._persist_scripts()
+                self._publish()
+                return {"slot": slot, "verified": True, "unchanged": True}
+            await self._backup_script(slot, before, buf)
+            # Direct Control may have been turned off while reading/backing up.
+            if not self.direct_control:
+                raise CommandError("Direct Control выключен; запись отменена")
+            try:
+                await session.set_setting(5502, slot, buf)
+            except (OSError, asyncio.TimeoutError):
+                # An absent ACK is not proof the write failed. Never resend it.
+                pass
+            actual = None
+            for attempt in range(3):
+                try:
+                    actual = await self._read_setting(session, 5502, slot, protocol.CAN_SCRIPT_SIZE)
+                    if actual == buf:
+                        break
+                except (CommandError, OSError, asyncio.TimeoutError):
+                    actual = None
+                if attempt < 2:
+                    await asyncio.sleep(0.3)
+            if actual is not None:
+                self._store_script(slot, actual)
+            else:
+                self._can_scripts = [s for s in self._can_scripts if s["slot"] != slot]
+                self._slot_names.pop(slot, None)
+            await self._persist_scripts()
+            self._publish()
+            if actual != buf:
+                detail = "ответ на чтение не получен" if actual is None else "прочитанные байты отличаются"
+                raise CommandError(f"Запись слота {slot} не подтверждена: {detail}. Прочитайте слот заново")
+            _LOGGER.info("Vega: slot %s write verified (82 bytes)", slot)
+            return {"slot": slot, "verified": True, "unchanged": False}
 
     async def async_send_command(self, action: str) -> dict:
         if not self.direct_control:

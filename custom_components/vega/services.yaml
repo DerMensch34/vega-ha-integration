@@ -2,13 +2,21 @@ read_can_scripts:
   name: Read CAN scripts
   description: >-
     Read the tracker's Setting 5502 CAN-script slots into the integration and
-    config/vega/can_scripts_<imei>.json. Also refreshes the command-button labels.
+    config/vega/can_scripts_<imei>.json. Read Setting 4001 scenarios to determine
+    command-to-slot bindings. Does not run scripts or change tracker settings.
+  fields:
+    entry_id:
+      name: Integration entry ID
+      description: Required when more than one Vega integration is loaded.
+      selector:
+        text:
 
 write_can_script:
   name: Write CAN script
   description: >-
-    Build a CAN-script buffer from a decoded spec and write it to a tracker slot.
-    Requires Direct Control to be on (writes to the vehicle).
+    Validate, back up and write a CAN script, then read back and compare all 82
+    bytes. Success means the stored bytes match; it does not run the script.
+    Requires Direct Control. Returns verified=true when a response is requested.
   fields:
     slot:
       name: Slot
@@ -17,13 +25,58 @@ write_can_script:
       selector:
         number:
           min: 0
-          max: 15
+          max: 7
           mode: box
     script:
       name: Script
       description: >-
         {"name": "...", "repeat": 1, "frames": [{"delay_ms": 2000, "can_id": 916,
         "bus": 2, "data": "fcff0fff001ff000"}, ...]}
+      required: true
+      selector:
+        object:
+    entry_id:
+      name: Integration entry ID
+      description: Required when more than one Vega integration is loaded.
+      selector:
+        text:
+    expected_raw:
+      name: Original slot bytes
+      description: Optional original 82 bytes in HEX; reject the write if the slot has changed.
+      selector:
+        text:
+
+read_commands:
+  name: Read commands and scenarios
+  description: Read eight CAN slots and 25 scenarios, including conditions and external output actions, into the CAN Scripts sensor attributes.
+  fields:
+    entry_id:
+      name: Integration entry ID
+      description: Required when more than one Vega integration is loaded.
+      selector:
+        text:
+
+write_commands:
+  name: Save commands and scenarios
+  description: >-
+    Validate and back up a document containing scenarios and scripts. Check the
+    original snapshots, write changed CAN slots followed by scenarios, and verify
+    each by reading it back. Requires Direct Control. On failure reports confirmed
+    writes and stops. Does not send a separate command to execute the scenario.
+  fields:
+    entry_id:
+      name: Integration entry ID
+      selector:
+        text:
+    document:
+      name: Command document
+      description: Object containing scenarios (index, conditions, match, actions) and scripts (slot, name, repeat, frames).
+      required: true
+      selector:
+        object:
+    expected:
+      name: Original settings
+      description: Map of 4001/index and 5502/slot to original HEX bytes, including referenced CAN slots. The editor supplies this automatically.
       required: true
       selector:
         object:

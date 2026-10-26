@@ -184,9 +184,11 @@ def test_explain_can_frame_and_script():
     raw_on = protocol.build_can_script("RemoteOn", [f_on1, f_on2, f_on3, f_on4], repeat=1)
     dec_on = protocol.decode_can_script(raw_on)
     assert "Запрос максимального прогрева" in dec_on["frames"][0]["description"]
-    assert "Remote ON wake-up" in dec_on["frames"][1]["description"]
+    assert "самостоятельный Remote On не подтверждён" in dec_on["frames"][1]["description"]
     assert "Heating ON" in dec_on["frames"][2]["description"]
-    assert "максимальный прогрев" in dec_on["summary"]
+    assert "максимального прогрева" in dec_on["summary"]
+    assert "запуск" not in protocol.decode_can_script(protocol.build_can_script("RemoteOn", [f_on2]))["summary"]
+    assert "Remote Off не подтверждён" in protocol.decode_can_script(protocol.build_can_script("RemoteOff", [f_on4]))["summary"]
 
     # Build roundtrip from dict preserves binary representation
     rebuilt = protocol.build_can_script_from_dict(dec_lock)

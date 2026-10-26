@@ -10,10 +10,12 @@ import logging
 import shutil
 from pathlib import Path
 
+import voluptuous as vol
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.core import HomeAssistant, SupportsResponse
+from homeassistant.exceptions import ConfigEntryNotReady, ServiceValidationError
 
 from .const import (
     CARD_URL,
@@ -176,6 +178,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
 
     coordinator = VegaCoordinator(hass, runtime, imei, entry.title or f"Vega {imei}")
+    coordinator.entry_id = entry.entry_id
     runtime.set_update_callback(coordinator.push)
 
     try:
@@ -197,21 +200,52 @@ def _register_services(hass: HomeAssistant) -> None:
     if hass.services.has_service(DOMAIN, "read_can_scripts"):
         return
 
-    def _runtimes():
-        return [c.runtime for c in hass.data.get(DOMAIN, {}).values()]
+    def _runtime(call):
+        entries = hass.data.get(DOMAIN, {})
+        entry_id = call.data.get("entry_id")
+        if entry_id is not None:
+            if entry_id not in entries:
+                raise ServiceValidationError("Указанная интеграция Vega не загружена")
+            return entries[entry_id].runtime
+        if len(entries) != 1:
+            raise ServiceValidationError("Выберите один трекер через entry_id")
+        return next(iter(entries.values())).runtime
 
-    async def _read(call) -> None:
-        for runtime in _runtimes():
-            await runtime.async_read_can_scripts()
+    async def _read(call) -> dict:
+        runtime = _runtime(call)
+        scripts = await runtime.async_read_can_scripts()
+        return {"slots": len(scripts), "scenarios_read": runtime.scenario_read_at is not None}
 
-    async def _write(call) -> None:
-        slot = int(call.data["slot"])
-        script = call.data["script"]  # {name, repeat, frames:[{delay_ms,can_id,bus,data}]}
-        for runtime in _runtimes():
-            await runtime.async_write_can_script(slot, script)
+    async def _write(call) -> dict:
+        return await _runtime(call).async_write_can_script(
+            call.data["slot"], call.data["script"], call.data.get("expected_raw")
+        )
 
-    hass.services.async_register(DOMAIN, "read_can_scripts", _read)
-    hass.services.async_register(DOMAIN, "write_can_script", _write)
+    async def _write_commands(call) -> dict:
+        return await _runtime(call).async_write_commands(call.data["document"], call.data["expected"])
+
+    hass.services.async_register(
+        DOMAIN, "read_can_scripts", _read,
+        schema=vol.Schema({vol.Optional("entry_id"): str}),
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN, "write_can_script", _write,
+        schema=vol.Schema({vol.Optional("entry_id"): str, vol.Required("slot"): int,
+                           vol.Required("script"): dict, vol.Optional("expected_raw"): str}),
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN, "read_commands", _read,
+        schema=vol.Schema({vol.Optional("entry_id"): str}),
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN, "write_commands", _write_commands,
+        schema=vol.Schema({vol.Optional("entry_id"): str, vol.Required("document"): dict,
+                           vol.Required("expected"): dict}),
+        supports_response=SupportsResponse.OPTIONAL,
+    )
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

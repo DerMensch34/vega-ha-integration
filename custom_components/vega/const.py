@@ -8,7 +8,7 @@ DOMAIN = "vega"
 
 # Bundled hold-to-confirm Lovelace card (independent of the evolute integration).
 # Bump CARD_VERSION together with the JS so the cache-buster forces a reload.
-CARD_VERSION = "0.2.5"
+CARD_VERSION = "0.3.0"
 CARD_FILENAME = "vega-hold-button.js"
 CARD_URL = f"/local/vega/{CARD_FILENAME}"
 
@@ -140,17 +140,15 @@ BINARY_SENSOR_TYPES = {
 # whose change confirms the command landed (None = no observable state).
 # NOTE: the central-lock device_class on the binary sensor is LOCK, where HA
 # treats on=unlocked; the confirm_key simply watches for any change.
-# (name, action, icon, confirm_key, slot) — `slot` is the Setting 5502 CAN-script
-# slot this command's output triggers; the button is labelled with that slot's
-# real name read from the tracker (falling back to `name`). None = no slot.
+# Slot routes are read from Setting 4001; never infer them from these names.
 BUTTON_TYPES = {
-    "lock": ("Lock", "lock", "mdi:lock", "central_lock", 0),
-    "unlock": ("Unlock", "unlock", "mdi:lock-open", "central_lock", 1),
-    "cooling": ("Cooling On", "cooling", "mdi:snowflake", None, 2),
-    "preheat": ("Preheat On", "preheat", "mdi:radiator", None, 4),
-    "remote_on": ("Remote On", "remote_on", "mdi:car-connected", None, 5),
-    "remote_off": ("Remote Off", "remote_off", "mdi:car-off", None, 6),
-    "horn": ("Horn", "horn", "mdi:bullhorn", None, 7),
-    "preheat_off": ("Preheat Off", "preheat_off", "mdi:radiator-off", None, None),
-    "cooling_off": ("Cooling Off", "cooling_off", "mdi:snowflake-off", None, None),
+    "lock": ("Lock", "lock", "mdi:lock", "central_lock"),
+    "unlock": ("Unlock", "unlock", "mdi:lock-open", "central_lock"),
+    "cooling": ("Cooling On", "cooling", "mdi:snowflake", None),
+    "preheat": ("Preheat On", "preheat", "mdi:radiator", None),
+    "remote_on": ("Remote On", "remote_on", "mdi:car-connected", None),
+    "remote_off": ("Remote Off", "remote_off", "mdi:car-off", None),
+    "horn": ("Horn", "horn", "mdi:bullhorn", None),
+    "preheat_off": ("Preheat Off", "preheat_off", "mdi:radiator-off", None),
+    "cooling_off": ("Cooling Off", "cooling_off", "mdi:snowflake-off", None),
 }

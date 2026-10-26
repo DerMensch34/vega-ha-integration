@@ -62,7 +62,11 @@ class VegaScriptsSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, _Any]:
-        return {"slots": self.coordinator.runtime.can_scripts}
+        runtime = self.coordinator.runtime
+        return {"slots": runtime.can_scripts, "entry_id": self.coordinator.entry_id,
+                "scenarios": runtime.scenarios,
+                "command_bindings": runtime.command_bindings,
+                "scenarios_read_at": runtime.scenario_read_at}
 
 
 class VegaSensor(CoordinatorEntity, SensorEntity):

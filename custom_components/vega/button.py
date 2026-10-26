@@ -30,26 +30,16 @@ async def async_setup_entry(
     def _sync_buttons() -> None:
         if not coordinator.imei or coordinator.imei == DEFAULT_IMEI:
             return
-        active_slots = {
-            int(s["slot"]) for s in coordinator.runtime.can_scripts if "slot" in s
-        }
-        if not active_slots:
+        if not coordinator.runtime.can_scripts:
             return
 
         to_add: list[VegaButton] = []
-        for key, (name, action, icon, confirm_key, slot) in BUTTON_TYPES.items():
+        for key, (name, action, icon, confirm_key) in BUTTON_TYPES.items():
             if key in added_keys:
                 continue
-            if slot is not None and slot not in active_slots:
-                continue
-            if key == "cooling_off" and 2 not in active_slots:
-                continue
-            if key == "preheat_off" and 4 not in active_slots and 5 not in active_slots:
-                continue
-
             added_keys.add(key)
             to_add.append(
-                VegaButton(coordinator, key, name, action, icon, confirm_key, slot)
+                VegaButton(coordinator, key, name, action, icon, confirm_key)
             )
 
         if to_add:
@@ -66,22 +56,22 @@ async def async_setup_entry(
 class VegaButton(CoordinatorEntity, ButtonEntity):
     """A direct command, guarded like the evolute buttons (block + pending)."""
 
-    def __init__(self, coordinator, key, name, action, icon, confirm_key, slot):
+    def __init__(self, coordinator, key, name, action, icon, confirm_key):
         super().__init__(coordinator)
         self._action = action
         self._confirm_key = confirm_key
         self._idle_icon = icon
         self._fallback_name = name
-        self._slot = slot
         self._attr_unique_id = f"vega_{coordinator.imei}_{key}"
         self.entity_id = f"button.vega_{coordinator.imei}_{key}"
         self._attr_device_info = build_device_info(coordinator.imei, coordinator.device_name)
 
     @property
     def name(self) -> str:
-        # Prefer the real CAN-script slot name read from the tracker.
-        if self._slot is not None:
-            slot_name = self.coordinator.runtime.slot_name(self._slot)
+        # Only an unambiguous route read from 4001 can supply a slot name.
+        slot = self.coordinator.runtime.command_slot(self._action)
+        if slot is not None:
+            slot_name = self.coordinator.runtime.slot_name(slot)
             if slot_name:
                 return slot_name
         return self._fallback_name
@@ -119,6 +109,7 @@ class VegaButton(CoordinatorEntity, ButtonEntity):
             "command": self._action,
             "pending": self._pending,
             "blocked": self.coordinator.is_command_blocked(self._action),
+            "script_binding": self.coordinator.runtime.command_bindings[self._action],
         }
         reason = self.coordinator.command_block_reason(self._action)
         if reason:

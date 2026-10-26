@@ -10,6 +10,8 @@ be unit-tested on its own.
 from __future__ import annotations
 
 import struct
+import math
+import re
 import time
 import zlib
 
@@ -55,6 +57,12 @@ def parse_imei(payload: bytes) -> str | None:
 REMOTE_STATE_SENSOR = 2805  # 3 = Remote Start, 1 = idle
 REMOTE_LEVEL_SETTING = 1341
 
+CAN_SCRIPT_SIZE = 82
+CAN_SCRIPT_COUNT = 8
+SCENARIO_COUNT = 25
+SCENARIO_SIZE = 50
+SCENARIO_COMPARISONS = {"equal": 0, "greater": 1, "changed": 2}
+
 # CAN script slots provisioned in Setting 5502 (reference / provisioning only).
 CAN_SCRIPTS = {
     0: {"name": "в охрану", "desc": "Запереть центральный замок (постановка на охрану)"},
@@ -62,8 +70,8 @@ CAN_SCRIPTS = {
     2: {"name": "охлаждение", "desc": "Дистанционный запуск кондиционера (заводской)"},
     3: {"name": "22 auto", "desc": "Климат 22°C Auto (заводской)"},
     4: {"name": "прогрев", "desc": "Предпусковой прогрев салона и батареи (заводской)"},
-    5: {"name": "RemoteOn", "desc": "Custom CAN Slot 5: Pure Remote Mode ON (триггер: trunkOpen)"},
-    6: {"name": "RemoteOff", "desc": "Custom CAN Slot 6: Pure Remote Mode OFF (триггер: trunkClose)"},
+    5: {"name": "RemoteOn", "desc": "Пользовательский слот; связь с выходами определяется сценариями"},
+    6: {"name": "RemoteOff", "desc": "Пользовательский слот; связь с выходами определяется сценариями"},
     7: {"name": "гудок", "desc": "Подать звуковой сигнал (клаксон)"},
 }
 
@@ -245,11 +253,11 @@ def explain_can_frame(bus: int, can_id: int, data: bytes | str) -> str:
             return f"BCM ({pfx}, {bus_label}): {joined}"
         return f"BCM ({pfx}, {bus_label}): Команда кузовной электроники"
 
-    # VCU / Gateway power wake-up
+    # Observed in climate scripts; a standalone Remote On effect is unverified.
     if can_id == 0x092:
         if len(data) > 2 and data[2] == 0x60:
-            return f"VCU ({pfx}, {bus_label}): Импульс пробуждения зажигания (Remote ON wake-up)"
-        return f"VCU ({pfx}, {bus_label}): Управление питанием / пробуждение"
+            return f"CAN ({pfx}, {bus_label}): Кадр из климатических скриптов; самостоятельный Remote On не подтверждён"
+        return f"CAN ({pfx}, {bus_label}): Назначение кадра не подтверждено"
 
     # HVAC Comfort preset
     if can_id == 0x093:
@@ -313,18 +321,14 @@ def explain_can_script(script: dict) -> str:
         or (len(d) >= 3 and d[1:3] == b"\x58\x0a")
         for d in all_data
     )
-    has_remote_on = any(len(d) > 2 and d[2] == 0x60 for d in all_data)
-    has_remote_off = any(len(d) >= 3 and d[1:3] == b"\x00\x09" for d in all_data)
+    has_reset = any(f.get("can_id") == 0x011 and len(d) >= 3 and d[1:3] == b"\x00\x09"
+                    for f, d in zip(frames, all_data))
     has_trunk_open = any(
         d.startswith(bytes.fromhex("1000ffff")) or (len(d) > 5 and d[5] == 0x05)
         for d in all_data
     )
     has_trunk_close = any(d.startswith(bytes.fromhex("0000ffff")) for d in all_data)
 
-    if has_remote_on and has_preheat:
-        return "Дистанционное пробуждение + максимальный прогрев (VCU + HVAC + BCM)"
-    if has_remote_on:
-        return "Дистанционный запуск зажигания (VCU + BCM)"
     if has_cooling:
         return "Включение охлаждения салона (HVAC + BCM)"
     if has_auto22:
@@ -341,8 +345,8 @@ def explain_can_script(script: dict) -> str:
         return "Открытие багажника (BCM + Tailgate)"
     if has_trunk_close:
         return "Закрытие багажника (Tailgate)"
-    if has_remote_off:
-        return "Выключение дистанционного запуска / климата (BCM)"
+    if has_reset:
+        return "Сброс триггера BCM; самостоятельный Remote Off не подтверждён"
 
     names = []
     if 0x701 in can_ids:
@@ -368,8 +372,8 @@ def decode_can_script(buf: bytes) -> dict:
     data (hex), description}], summary}. Only non-padding frames (the 4ms/id0 filler)
     are returned.
     """
-    if len(buf) < 82:
-        return {"name": "", "repeat": 1, "frames": [], "summary": "Пустой слот", "raw": buf.hex()}
+    if len(buf) != CAN_SCRIPT_SIZE:
+        raise ValueError("CAN-скрипт должен содержать ровно 82 байта")
     name = buf[:16].split(b"\x00")[0].decode("cp1251", "replace")
     frames = []
     for s in range(4):
@@ -380,7 +384,7 @@ def decode_can_script(buf: bytes) -> dict:
         data = buf[off + 7 : off + 15]
         delay_ms = delay_word & 0x7FFF
         # filler slot from build_can_script: delay 4ms, id 0, zero payload
-        if can_id == 0 and not any(data) and delay_ms == 4:
+        if can_id == 0 and bus == 0 and not any(data) and delay_word == 0x8004:
             continue
         frames.append(
             {
@@ -392,13 +396,39 @@ def decode_can_script(buf: bytes) -> dict:
             }
         )
     repeat = buf[77] if len(buf) > 77 else 1
-    res = {"name": name, "repeat": repeat, "frames": frames}
+    res = {"name": name, "repeat": repeat, "frames": frames, "raw": buf.hex()}
     res["summary"] = explain_can_script(res)
     return res
 
 
 def build_can_script_from_dict(spec: dict) -> bytes:
-    """Build a 5502 buffer from a decode_can_script-shaped dict."""
+    """Validate an editor document before encoding; never truncate user input."""
+    if not isinstance(spec, dict):
+        raise ValueError("Скрипт должен быть JSON-объектом")
+    _check_fields(spec, {"name", "repeat", "frames"}, {"summary", "raw", "slot"}, "script")
+    name = spec["name"]
+    if not isinstance(name, str) or any(ord(c) < 32 for c in name):
+        raise ValueError("name: ожидается строка без управляющих символов")
+    try:
+        encoded = name.encode("cp1251")
+    except UnicodeEncodeError as err:
+        raise ValueError("name: имя должно состоять из символов Windows-1251") from err
+    if len(encoded) > 16:
+        raise ValueError("name: максимум 16 байт Windows-1251")
+    _integer(spec["repeat"], 0, 255, "repeat")
+    frames = spec["frames"]
+    if not isinstance(frames, list) or len(frames) > 4:
+        raise ValueError("frames: требуется список из 0–4 кадров")
+    for i, frame in enumerate(frames):
+        label = f"frames[{i}]"
+        if not isinstance(frame, dict):
+            raise ValueError(f"{label}: ожидается объект")
+        _check_fields(frame, {"delay_ms", "can_id", "bus", "data"}, {"description"}, label)
+        _integer(frame["delay_ms"], 0, 32767, f"{label}.delay_ms")
+        _integer(frame["can_id"], 0, 0x1FFFFFFF, f"{label}.can_id")
+        _integer(frame["bus"], 0, 3, f"{label}.bus")
+        if not isinstance(frame["data"], str) or not re.fullmatch(r"[0-9a-fA-F]{16}", frame["data"]):
+            raise ValueError(f"{label}.data: нужны ровно 8 байт (16 HEX-символов)")
     slots = [
         (
             int(f.get("delay_ms", 4)),
@@ -409,6 +439,170 @@ def build_can_script_from_dict(spec: dict) -> bytes:
         for f in spec.get("frames", [])
     ]
     return build_can_script(spec.get("name", ""), slots, int(spec.get("repeat", 1)))
+
+
+def _check_fields(value: dict, required: set, optional: set, label: str) -> None:
+    missing = required - value.keys()
+    unknown = value.keys() - required - optional
+    if missing:
+        raise ValueError(f"{label}: отсутствуют поля {', '.join(sorted(missing))}")
+    if unknown:
+        raise ValueError(f"{label}: неизвестные поля {', '.join(sorted(unknown))}")
+
+
+def _integer(value, minimum: int, maximum: int, label: str) -> int:
+    if type(value) is not int or not minimum <= value <= maximum:
+        raise ValueError(f"{label}: требуется целое число {minimum}…{maximum}")
+    return value
+
+
+def validate_script_slot(slot: int) -> int:
+    return _integer(slot, 0, CAN_SCRIPT_COUNT - 1, "slot")
+
+
+def decode_scenario(buf: bytes, index: int) -> dict:
+    """Read conditions and the CAN selector from a 50-byte Setting 4001 record.
+
+    Windows Configurator 1.28.46 ScenarioActionDialog: word[48] >> 10 is
+    the CAN selector (0 = none, 1..8 = slots 0..7). Other actions are retained
+    in raw; this decoder does not claim a scenario only sends CAN frames.
+    """
+    if len(buf) != 50:
+        raise ValueError(f"Сценарий {index}: ожидалось 50 байт")
+    conditions = []
+    for off in (0, 8):
+        sensor, threshold, comparison = struct.unpack_from("<HfB", buf, off)
+        if sensor:
+            if not math.isfinite(threshold) or comparison not in (0, 1, 2):
+                raise ValueError(f"Сценарий {index}: неизвестное условие")
+            conditions.append({"sensor": sensor, "threshold": threshold, "comparison": comparison})
+    selector = buf[49] >> 2
+    if selector > CAN_SCRIPT_COUNT or buf[7] & ~1:
+        raise ValueError(f"Сценарий {index}: неподдерживаемый формат")
+    result = {"index": index, "conditions": conditions, "all": bool(buf[7] & 1),
+              "slot": selector - 1 if selector else None, "raw": buf.hex()}
+    result["document"] = scenario_document(buf)
+    # Keep actions not represented by the editor verbatim (SMS, calls, built-in
+    # vehicle actions, physical outputs). Never turn them into silent zeroes.
+    result["other_actions_hex"] = (buf[15:42] + buf[46:49] + bytes([buf[49] & 3])).hex()
+    result["has_other_actions"] = any(bytes.fromhex(result["other_actions_hex"]))
+    try:
+        result["editable"] = build_scenario_from_dict(result["document"], buf) == buf
+    except ValueError:
+        result["editable"] = False
+    return result
+
+
+def scenario_document(buf: bytes) -> dict:
+    """Editor fields; fixed condition positions retain disabled sensor values."""
+    if len(buf) != SCENARIO_SIZE:
+        raise ValueError("Сценарий должен содержать ровно 50 байт")
+    conditions = []
+    for offset in (0, 8):
+        sensor, value, comparison = struct.unpack_from("<HfB", buf, offset)
+        conditions.append(None if not sensor else {
+            "sensor": sensor, "comparison": next((k for k, v in SCENARIO_COMPARISONS.items() if v == comparison), "unknown"),
+            "value": value,
+        })
+    return {"conditions": conditions, "match": "all" if buf[7] & 1 else "any", "actions": {
+        "external_output_on": buf[42], "external_output_on_seconds": buf[43],
+        "external_output_off": buf[44], "external_output_off_seconds": buf[45],
+        "can_script": (buf[49] >> 2) - 1 if buf[49] >> 2 else None,
+    }}
+
+
+def build_scenario_from_dict(spec: dict, original: bytes) -> bytes:
+    """Patch verified fields in a read snapshot, preserving every other byte.
+
+    Configurator 1.28.46 ScenarioActionDialog: raw[42/43] is external output
+    ON/time, raw[44/45] OFF/time. The CAN selector shares byte 49 with flags.
+    This is a set of actions; firmware execution order is not established.
+    """
+    if not isinstance(spec, dict):
+        raise ValueError("Сценарий должен быть объектом")
+    _check_fields(spec, {"conditions", "match", "actions"}, set(), "scenario")
+    before = scenario_document(original)
+    conditions = spec["conditions"]
+    if not isinstance(conditions, list) or len(conditions) != 2:
+        raise ValueError("conditions: нужны два условия; неиспользуемое — null")
+    buf = bytearray(original)
+    for i, condition in enumerate(conditions):
+        offset = i * 8
+        if condition is None:
+            if before["conditions"][i] is not None:
+                buf[offset:offset + 7] = bytes(7)
+            continue
+        if not isinstance(condition, dict):
+            raise ValueError("Условие должно быть объектом или null")
+        _check_fields(condition, {"sensor", "comparison", "value"}, set(), f"conditions[{i}]")
+        _integer(condition["sensor"], 1, 65535, "sensor")
+        comparison = condition["comparison"]
+        if not isinstance(comparison, str) or comparison not in SCENARIO_COMPARISONS:
+            raise ValueError("comparison: equal, greater или changed")
+        value = condition["value"]
+        if type(value) not in (int, float):
+            raise ValueError("value: требуется конечное число float32")
+        try:
+            encoded = struct.pack("<HfB", condition["sensor"], value, SCENARIO_COMPARISONS[comparison])
+            if not math.isfinite(struct.unpack_from("<f", encoded, 2)[0]):
+                raise ValueError("value: требуется конечное число float32")
+        except (OverflowError, struct.error) as err:
+            raise ValueError("value: число вне диапазона float32") from err
+        if condition != before["conditions"][i]:
+            buf[offset:offset + 7] = encoded
+    if spec["match"] not in ("any", "all"):
+        raise ValueError("match: any или all")
+    buf[7] = (buf[7] & ~1) | (spec["match"] == "all")
+    actions = spec["actions"]
+    if not isinstance(actions, dict):
+        raise ValueError("actions: требуется объект")
+    _check_fields(actions, set(before["actions"]), set(), "actions")
+    for key, offset, maximum in (("external_output_on", 42, 15), ("external_output_on_seconds", 43, 255),
+                                 ("external_output_off", 44, 15), ("external_output_off_seconds", 45, 255)):
+        buf[offset] = _integer(actions[key], 0, maximum, key)
+    slot = actions["can_script"]
+    if slot is not None:
+        validate_script_slot(slot)
+    buf[49] = (buf[49] & 3) | (0 if slot is None else (slot + 1) << 2)
+    return bytes(buf)
+
+
+def command_script_bindings(scenarios: list[dict]) -> dict:
+    """Resolve configured event routes, without claiming physical execution.
+
+    A partial read cannot establish absence/uniqueness of a route. An AND
+    condition on another sensor is conditional, even if the command matches.
+    """
+    complete = len(scenarios) == SCENARIO_COUNT and {s["index"] for s in scenarios} == set(range(SCENARIO_COUNT))
+    result = {}
+    for action, spec in COMMAND_MAP.items():
+        routes = []
+        scenario_routes = []
+        for scenario in scenarios:
+            conditions = scenario["conditions"]
+            matches = []
+            for c in conditions:
+                match = c["sensor"] == spec["setting_id"] and (
+                    (c["comparison"] == 0 and spec["val"] == c["threshold"])
+                    or (c["comparison"] == 1 and spec["val"] > c["threshold"])
+                    or c["comparison"] == 2
+                )
+                matches.append(match)
+            if any(matches):
+                route = {"scenario": scenario["index"], "slot": scenario["slot"],
+                         "conditional": scenario["all"] and not all(matches)}
+                scenario_routes.append(route)
+                if scenario["slot"] is not None:
+                    routes.append(route)
+        slots = sorted({r["slot"] for r in routes})
+        status = "unavailable" if not complete else (
+            "conditional" if any(r["conditional"] for r in routes) else
+            "multiple" if len(slots) > 1 else "single" if slots else "none"
+        )
+        result[action] = {"setting_id": spec["setting_id"], "value": spec["val"],
+                          "status": status, "slots": slots, "routes": routes,
+                          "scenario_routes": scenario_routes}
+    return result
 
 
 def build_can_script(name: str, slots: list, repeat: int = 1) -> bytes:
