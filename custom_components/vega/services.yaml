@@ -27,3 +27,21 @@ write_can_script:
       required: true
       selector:
         object:
+
+run_script:
+  name: Run CAN script (slot)
+  description: >-
+    Trigger a factory CAN-script slot by index on the tracker (Vega binary subcmd
+    0x43). Plays the frames stored in Setting 5502 slot <slot>. Requires Direct
+    Control on. NB: the 0x43 run-script path is not yet validated live — test one
+    slot under supervision first.
+  fields:
+    slot:
+      name: Slot
+      description: Setting 5502 sub-id (0-7) to run.
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 15
+          mode: box

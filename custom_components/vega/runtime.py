@@ -18,7 +18,7 @@ from typing import Any, Callable
 from homeassistant.core import HomeAssistant
 
 from . import protocol
-from .const import DEFAULT_IMEI, ONLINE_TIMEOUT, SENSOR_KEY_MAP
+from .const import ACTION_SCRIPT_SLOT, DEFAULT_IMEI, ONLINE_TIMEOUT, SENSOR_KEY_MAP
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -107,6 +107,23 @@ class VegaSession:
             "elapsed_ms": round((time.time() - t0) * 1000, 1),
         }
 
+    async def run_script(self, slot: int, timeout: float = 6.0) -> dict:
+        req_id = self.get_next_req_id()
+        frame = protocol.build_run_script_frame(req_id, slot)
+        t0 = time.time()
+        try:
+            res = await self._request(frame, req_id, timeout=timeout)
+        except asyncio.TimeoutError:
+            return {"success": False, "error": "timeout", "elapsed_ms": round((time.time() - t0) * 1000, 1)}
+        data = res.get("data", b"")
+        res_code = data[0] if len(data) > 0 else res.get("result_code", -1)
+        return {
+            "success": res_code == 0,
+            "slot": slot,
+            "result_code": res_code,
+            "elapsed_ms": round((time.time() - t0) * 1000, 1),
+        }
+
 
 class InjectionSession:
     """Injects queries/commands into a cloud-authenticated relayed session.
@@ -162,6 +179,17 @@ class InjectionSession:
         res_code = data[0] if len(data) > 0 else res.get("result_code", -1)
         return {"success": res_code == 0, "setting_id": setting_id, "sub_id": sub_id, "result_code": res_code}
 
+    async def run_script(self, slot: int, timeout: float = 6.0) -> dict:
+        req_id = self.get_next_req_id()
+        frame = protocol.build_run_script_frame(req_id, slot)
+        try:
+            res = await self._request(frame, req_id, timeout=timeout)
+        except asyncio.TimeoutError:
+            return {"success": False, "error": "timeout"}
+        data = res.get("data", b"")
+        res_code = data[0] if len(data) > 0 else res.get("result_code", -1)
+        return {"success": res_code == 0, "slot": slot, "result_code": res_code}
+
 
 class VegaRuntime:
     """Owns the listener, the telemetry snapshot and the command path."""
@@ -176,6 +204,7 @@ class VegaRuntime:
         poll_interval: int,
         proxy_mode: bool = False,
         direct_control: bool = False,
+        use_run_script: bool = False,
         upstream: tuple[str, int] | None = None,
         learned_pin: str | None = None,
         learned_imei: str = "",
@@ -192,6 +221,10 @@ class VegaRuntime:
         #   direct_control -> terminate locally and allow commands (SET_SETTING)
         self.proxy_mode = proxy_mode
         self.direct_control = direct_control
+        # When on, command buttons run the matching factory CAN-script slot
+        # (subcmd 0x43) instead of writing a SET_SETTING. Off by default: the
+        # 0x43 run-script path is not yet validated live.
+        self.use_run_script = use_run_script
         self.upstream = upstream
         self.learned_pin = learned_pin
         self.learned_imei = learned_imei or ""
@@ -845,9 +878,30 @@ class VegaRuntime:
         _LOGGER.info("Vega: wrote CAN script slot %s (%s)", slot, spec.get("name"))
         return res
 
+    async def async_run_script(self, slot: int) -> dict:
+        """Run a factory CAN-script slot by index (subcmd 0x43). Gated by direct_control.
+
+        This plays the frames stored in Setting 5502 slot <slot> directly, with no
+        SET_SETTING side effects (no 1341 level hold / autoclear).
+        """
+        if not self.direct_control:
+            raise CommandError("Direct control is off; enable the 'Direct control' switch first.")
+        session = self._inject_session or self._active_vega_session()
+        if session is None:
+            raise CommandError("Vehicle is offline (no active Vega session)")
+        result = await session.run_script(int(slot))
+        if not result.get("success"):
+            raise CommandError(f"Vega run-script slot {slot} was not accepted: {result}")
+        _LOGGER.info("Vega: ran CAN script slot %s (%s)", slot, result)
+        return result
+
     async def async_send_command(self, action: str) -> dict:
         if not self.direct_control:
             raise CommandError("Direct control is off; enable the 'Direct control' switch first.")
+        # Run-script mode: invoke the matching factory slot directly (0x43) instead
+        # of writing a telematics setting. Actions without a slot fall through.
+        if self.use_run_script and action in ACTION_SCRIPT_SLOT:
+            return await self.async_run_script(ACTION_SCRIPT_SLOT[action])
         spec = protocol.COMMAND_MAP.get(action)
         if spec is None:
             raise CommandError(f"Unknown Vega command '{action}'")

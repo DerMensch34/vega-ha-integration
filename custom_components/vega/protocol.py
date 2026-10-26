@@ -184,6 +184,18 @@ def build_set_setting_frame(req_id: int, setting_id: int, sub_id: int, val: byte
     return build_frame(CMD_COMMAND, payload)
 
 
+def build_run_script_frame(req_id: int, slot: int) -> bytes:
+    """Run the CAN script stored in a Setting 5502 slot, by index.
+
+    Subcmd 0x43 = Run CAN script. NB this is NOT 0x44 — 0x44 is Quectel GSM modem
+    firmware-update control, which reboots the modem and drops the session. 0x43
+    carries a single slot byte. (Per JADX decompilation; validate live before use.)
+    """
+    data = bytes([slot & 0xFF])
+    payload = struct.pack("<IBB", req_id, 0x43, len(data)) + data
+    return build_frame(CMD_COMMAND, payload)
+
+
 def format_script_slot(delay_ms: int, can_id: int, bus: int, payload: bytes) -> bytes:
     """Format one 15-byte slot in a Setting 5502 buffer."""
     delay_word = (delay_ms & 0x7FFF) | 0x8000

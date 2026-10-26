@@ -63,6 +63,21 @@ def test_frame_roundtrip_and_iter():
     assert parsed["sensor"]["value"] == 85
 
 
+def test_build_run_script_frame():
+    # Run-script: CMD 0x01, subcmd 0x43, data = [slot], NOT 0x44 (GSM modem).
+    frame = protocol.build_run_script_frame(0x50000001, 7)
+    buf = bytearray(frame)
+    frames = list(protocol.iter_frames(buf))
+    assert len(frames) == 1 and len(buf) == 0
+    cmd, payload = frames[0]
+    assert cmd == protocol.CMD_COMMAND
+    req_id, subcmd, dlen = struct.unpack("<IBB", payload[:6])
+    assert req_id == 0x50000001
+    assert subcmd == 0x43  # must never be 0x44
+    assert dlen == 1
+    assert payload[6] == 7
+
+
 def test_iter_frames_partial_tail():
     f1 = _make_command_ans(1001, 0x03, bytes([0xF3, 0x0A, 0x01, 85]))
     buf = bytearray(f1 + f1[:5])  # one whole frame + a partial second
