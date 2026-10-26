@@ -20,7 +20,6 @@ from .const import (
     CARD_VERSION,
     CONF_COMMANDS_ENABLED,
     CONF_DIRECT_CONTROL,
-    CONF_USE_RUN_SCRIPT,
     CONF_IMEI,
     CONF_LEARNED_IMEI,
     CONF_LEARNED_PIN,
@@ -32,7 +31,6 @@ from .const import (
     CONF_UPSTREAM_HOST,
     CONF_UPSTREAM_PORT,
     DEFAULT_DIRECT_CONTROL,
-    DEFAULT_USE_RUN_SCRIPT,
     DEFAULT_IMEI,
     DEFAULT_PIN,
     DEFAULT_PIN2,
@@ -168,7 +166,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         poll_interval=int(_opt(entry, CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)),
         proxy_mode=bool(_opt(entry, CONF_PROXY_MODE, DEFAULT_PROXY_MODE)),
         direct_control=direct_control,
-        use_run_script=bool(_opt(entry, CONF_USE_RUN_SCRIPT, DEFAULT_USE_RUN_SCRIPT)),
         upstream=(
             str(_opt(entry, CONF_UPSTREAM_HOST, DEFAULT_UPSTREAM_HOST)),
             int(_opt(entry, CONF_UPSTREAM_PORT, DEFAULT_UPSTREAM_PORT)),
@@ -213,14 +210,8 @@ def _register_services(hass: HomeAssistant) -> None:
         for runtime in _runtimes():
             await runtime.async_write_can_script(slot, script)
 
-    async def _run(call) -> None:
-        slot = int(call.data["slot"])
-        for runtime in _runtimes():
-            await runtime.async_run_script(slot)
-
     hass.services.async_register(DOMAIN, "read_can_scripts", _read)
     hass.services.async_register(DOMAIN, "write_can_script", _write)
-    hass.services.async_register(DOMAIN, "run_script", _run)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -243,7 +234,6 @@ async def _async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
     # Update runtime flags dynamically without dropping live socket
     runtime.direct_control = bool(_opt(entry, CONF_DIRECT_CONTROL, DEFAULT_DIRECT_CONTROL))
-    runtime.use_run_script = bool(_opt(entry, CONF_USE_RUN_SCRIPT, DEFAULT_USE_RUN_SCRIPT))
     runtime.proxy_mode = bool(_opt(entry, CONF_PROXY_MODE, DEFAULT_PROXY_MODE))
     runtime.poll_interval = int(_opt(entry, CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL))
 

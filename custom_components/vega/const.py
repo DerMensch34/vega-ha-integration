@@ -24,7 +24,6 @@ CONF_POLL_INTERVAL = "poll_interval"
 # direct_control = terminate locally and allow commands.
 CONF_PROXY_MODE = "proxy_mode"
 CONF_DIRECT_CONTROL = "direct_control"
-CONF_USE_RUN_SCRIPT = "use_run_script"  # buttons run the factory slot (0x43) vs SET_SETTING
 CONF_UPSTREAM_HOST = "upstream_host"
 CONF_UPSTREAM_PORT = "upstream_port"
 CONF_LEARNED_PIN = "learned_pin"
@@ -35,7 +34,6 @@ DEFAULT_UPSTREAM_PORT = 21124
 # begins collecting PIN/IMEI as soon as a tracker is pointed at it.
 DEFAULT_PROXY_MODE = True
 DEFAULT_DIRECT_CONTROL = False
-DEFAULT_USE_RUN_SCRIPT = False  # keep SET_SETTING until 0x43 run-script is validated live
 
 # Defaults. The tracker's Setting 3001 server slot is re-pointed to this host:port
 # by the owner. A high port avoids clashing with whatever already binds :443 on
@@ -155,11 +153,4 @@ BUTTON_TYPES = {
     "horn": ("Horn", "horn", "mdi:bullhorn", None, 7),
     "preheat_off": ("Preheat Off", "preheat_off", "mdi:radiator-off", None, None),
     "cooling_off": ("Cooling Off", "cooling_off", "mdi:snowflake-off", None, None),
-}
-
-# Which factory CAN-script slot each command maps to — derived from BUTTON_TYPES
-# (single source of truth), used by run-script mode. Commands without a slot
-# (preheat_off/cooling_off) are omitted and fall back to SET_SETTING.
-ACTION_SCRIPT_SLOT: dict[str, int] = {
-    action: spec[4] for action, spec in BUTTON_TYPES.items() if spec[4] is not None
 }
