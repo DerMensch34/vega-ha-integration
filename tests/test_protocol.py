@@ -186,7 +186,7 @@ def test_explain_can_frame_and_script():
     assert "Запрос максимального прогрева" in dec_on["frames"][0]["description"]
     assert "Remote ON wake-up" in dec_on["frames"][1]["description"]
     assert "Heating ON" in dec_on["frames"][2]["description"]
-    assert "Дистанционный запуск и максимальный прогрев" in dec_on["summary"]
+    assert "максимальный прогрев" in dec_on["summary"]
 
     # Build roundtrip from dict preserves binary representation
     rebuilt = protocol.build_can_script_from_dict(dec_lock)

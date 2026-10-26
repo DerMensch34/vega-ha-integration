@@ -228,12 +228,11 @@ def explain_can_frame(bus: int, can_id: int, data: bytes | str) -> str:
             elif data[1:3] == b"\x58\x0a":
                 parts.append("климат Auto 22°C")
             elif data[1:3] == b"\x80\x0a":
-                temp = f" {data[3]}°C" if len(data) > 3 and data[3] > 0 else ""
-                parts.append(f"максимальный прогрев{temp} (Heating ON)")
+                parts.append("максимальный прогрев (Heating ON)")
             elif data[1:3] == b"\x00\x09":
                 parts.append("сброс триггера команды (снятие импульса / idle)")
         if len(data) > 3 and data[3] == 0x5B:
-            parts.append("скорость вентилятора климата")
+            parts.append("предустановка обдува климата")
         if len(data) >= 6:
             if data[4:6] == b"\xaa\x21":
                 parts.append("закрытие центрального замка (Lock)")
@@ -269,7 +268,7 @@ def explain_can_frame(bus: int, can_id: int, data: bytes | str) -> str:
     # HVAC target control
     if can_id == 0x394:
         if data.startswith(bytes.fromhex("fcff0fff")):
-            return f"HVAC ({pfx}, {bus_label}): Запрос максимального прогрева (HI / 32°C)"
+            return f"HVAC ({pfx}, {bus_label}): Запрос максимального прогрева (HI, максимальный нагрев)"
         if data.startswith(bytes.fromhex("7cff0fff")):
             return f"HVAC ({pfx}, {bus_label}): Запрос поддержания 22°C (Auto)"
         if data.startswith(bytes.fromhex("4100")):
@@ -323,7 +322,7 @@ def explain_can_script(script: dict) -> str:
     has_trunk_close = any(d.startswith(bytes.fromhex("0000ffff")) for d in all_data)
 
     if has_remote_on and has_preheat:
-        return "Дистанционный запуск и максимальный прогрев (VCU + HVAC + BCM)"
+        return "Дистанционное пробуждение + максимальный прогрев (VCU + HVAC + BCM)"
     if has_remote_on:
         return "Дистанционный запуск зажигания (VCU + BCM)"
     if has_cooling:
