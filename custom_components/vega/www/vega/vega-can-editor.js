@@ -35,11 +35,10 @@ function explainCanFrame(bus, canId, dataHex) {
       if (b12 === "440a") parts.push("включение охлаждения (A/C ON)");
       else if (b12 === "580a") parts.push("климат Auto 22°C");
       else if (b12 === "800a") {
-        const t = d.length >= 8 ? parseInt(d.slice(6, 8), 16) : 0;
-        parts.push(`максимальный прогрев ${t ? t + "°C " : ""}(Heating ON)`);
+        parts.push("максимальный прогрев (Heating ON)");
       } else if (b12 === "0009") parts.push("сброс триггера команды (снятие импульса / idle)");
     }
-    if (d.length >= 8 && d.slice(6, 8) === "5b") parts.push("скорость вентилятора климата");
+    if (d.length >= 8 && d.slice(6, 8) === "5b") parts.push("предустановка обдува климата");
     if (d.length >= 12) {
       const b45 = d.slice(8, 12);
       if (b45 === "aa21") parts.push("закрытие центрального замка (Lock)");
@@ -63,7 +62,7 @@ function explainCanFrame(bus, canId, dataHex) {
     return `Tailgate (${pfx}, ${busLabel}): Модуль двери багажника`;
   }
   if (cid === 0x394) {
-    if (d.startsWith("fcff0fff")) return `HVAC (${pfx}, ${busLabel}): Запрос максимального прогрева (HI / 32°C)`;
+    if (d.startsWith("fcff0fff")) return `HVAC (${pfx}, ${busLabel}): Запрос максимального прогрева (HI, максимальный нагрев)`;
     if (d.startsWith("7cff0fff")) return `HVAC (${pfx}, ${busLabel}): Запрос поддержания 22°C (Auto)`;
     if (d.startsWith("4100")) return `HVAC (${pfx}, ${busLabel}): Запрос кондиционирования (Cooling LO)`;
     return `HVAC (${pfx}, ${busLabel}): Управление целевым режимом климата`;
@@ -88,7 +87,7 @@ function explainCanScript(script) {
   const hasTrunkClose = allHex.some(d => d.startsWith("0000ffff"));
   const hasRemoteOff = allHex.some(d => d.length >= 6 && d.slice(2, 6) === "0009");
 
-  if (hasRemoteOn && hasPreheat) return "Дистанционный запуск и максимальный прогрев (VCU + HVAC + BCM)";
+  if (hasRemoteOn && hasPreheat) return "Дистанционное пробуждение + максимальный прогрев (VCU + HVAC + BCM)";
   if (hasRemoteOn) return "Дистанционный запуск зажигания (VCU + BCM)";
   if (hasCooling) return "Включение охлаждения салона (HVAC + BCM)";
   if (hasAuto22) return "Включение климат-контроля 22°C Auto (HVAC + BCM)";
@@ -357,7 +356,7 @@ class VegaCanEditor extends HTMLElement {
         const busName = busNum === 1 ? "Body (1)" : busNum === 2 ? "EV/Diag (2)" : `Bus ${busNum}`;
         const canIdNum = typeof f.can_id === "string" ? (f.can_id.startsWith("0x") ? parseInt(f.can_id, 16) : parseInt(f.can_id, 10)) : (f.can_id || 0);
         const canIdHex = `0x${canIdNum.toString(16).toUpperCase()}`;
-        const actionDesc = explainCanFrame(busNum, canIdNum, f.data);
+        const actionDesc = f.description || explainCanFrame(busNum, canIdNum, f.data);
         return `
           <div class="frame-card">
             <div class="frame-header">
