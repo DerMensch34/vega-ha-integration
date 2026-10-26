@@ -773,14 +773,15 @@ class VegaRuntime:
             if os.path.exists(path):
                 with open(path, encoding="utf-8") as f:
                     self._can_scripts = json.load(f)
+                # Descriptions/summary are derived data: always recompute them
+                # from the stable raw frames so a parser change takes effect on
+                # the next load (never trust a cached description from disk).
                 for s in self._can_scripts:
-                    if not s.get("summary"):
-                        s["summary"] = protocol.explain_can_script(s)
                     for f_item in s.get("frames", []):
-                        if not f_item.get("description"):
-                            f_item["description"] = protocol.explain_can_frame(
-                                f_item.get("bus", 0), f_item.get("can_id", 0), f_item.get("data", "")
-                            )
+                        f_item["description"] = protocol.explain_can_frame(
+                            f_item.get("bus", 0), f_item.get("can_id", 0), f_item.get("data", "")
+                        )
+                    s["summary"] = protocol.explain_can_script(s)
                 self._slot_names = {
                     int(s["slot"]): s["name"] for s in self._can_scripts if s.get("name")
                 }
