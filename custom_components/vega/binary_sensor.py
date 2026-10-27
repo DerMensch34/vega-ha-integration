@@ -53,7 +53,7 @@ class VegaBinarySensor(CoordinatorEntity, BinarySensorEntity):
         self._attr_device_class = device_class
         self._attr_unique_id = f"vega_{coordinator.imei}_{key}"
         self.entity_id = f"binary_sensor.vega_{coordinator.imei}_{key}"
-        self._attr_device_info = build_device_info(coordinator.imei, coordinator.device_name)
+        self._attr_device_info = build_device_info(coordinator.imei, coordinator.device_name, coordinator.entry_id)
 
     @property
     def is_on(self) -> bool:

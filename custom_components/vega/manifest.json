@@ -3,10 +3,10 @@
   "name": "Vega MT X CAN",
   "codeowners": ["@dsultanr"],
   "config_flow": true,
-  "dependencies": [],
+  "dependencies": ["frontend"],
   "documentation": "https://github.com/dsultanr/vega-ha-integration",
   "integration_type": "hub",
   "iot_class": "local_push",
   "requirements": [],
-  "version": "0.2.0"
+  "version": "0.2.1"
 }

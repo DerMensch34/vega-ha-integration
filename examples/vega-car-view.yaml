@@ -220,13 +220,8 @@ cards:
           - entity: sensor.vega_000000000000000_backup_battery
           - entity: sensor.vega_000000000000000_tracker_temp
 
-      # CAN-скрипты (Setting 5502): просмотр/правка слотов и запись в трекер.
-      # Карточка custom:vega-can-editor bundled интеграцией vega (www/vega).
-      # Читает слоты из атрибута slots сенсора can_scripts; «Прочитать из трекера»
-      # вызывает vega.read_can_scripts, «Записать» — vega.write_can_script
-      # (нужен включённый Direct Control).
-      - type: custom:vega-can-editor
-        entity: sensor.vega_000000000000000_can_scripts
+      # Редактор команд открывается по ссылке конфигурации устройства Vega:
+      # Настройки → Устройства и службы → Устройства → Vega.
 
       # Карта (Google Map Card из /map/map)
       - type: custom:google-map-card

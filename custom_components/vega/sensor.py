@@ -54,7 +54,7 @@ class VegaScriptsSensor(CoordinatorEntity, SensorEntity):
         self._attr_name = "CAN Scripts"
         self._attr_unique_id = f"vega_{coordinator.imei}_can_scripts"
         self.entity_id = f"sensor.vega_{coordinator.imei}_can_scripts"
-        self._attr_device_info = build_device_info(coordinator.imei, coordinator.device_name)
+        self._attr_device_info = build_device_info(coordinator.imei, coordinator.device_name, coordinator.entry_id)
 
     @property
     def native_value(self) -> int:
@@ -92,7 +92,7 @@ class VegaSensor(CoordinatorEntity, SensorEntity):
         self._attr_state_class = state_class
         self._attr_unique_id = f"vega_{coordinator.imei}_{key}"
         self.entity_id = f"sensor.vega_{coordinator.imei}_{key}"
-        self._attr_device_info = build_device_info(coordinator.imei, coordinator.device_name)
+        self._attr_device_info = build_device_info(coordinator.imei, coordinator.device_name, coordinator.entry_id)
 
     @property
     def native_value(self) -> Any:

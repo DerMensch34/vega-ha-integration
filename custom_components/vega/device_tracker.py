@@ -44,7 +44,7 @@ class VegaDeviceTracker(CoordinatorEntity, TrackerEntity):
         self._attr_unique_id = f"vega_{coordinator.imei}_tracker"
         self.entity_id = f"device_tracker.vega_{coordinator.imei}"
         self._attr_icon = "mdi:car"
-        self._attr_device_info = build_device_info(coordinator.imei, coordinator.device_name)
+        self._attr_device_info = build_device_info(coordinator.imei, coordinator.device_name, coordinator.entry_id)
 
     def _coord(self, key: str) -> float | None:
         value = (self.coordinator.data or {}).get(key)

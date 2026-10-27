@@ -42,6 +42,7 @@ from .const import (
     DEFAULT_UPSTREAM_HOST,
     DEFAULT_UPSTREAM_PORT,
     DOMAIN,
+    PANEL_PATH,
 )
 from .coordinator import VegaCoordinator
 from .runtime import VegaRuntime
@@ -65,7 +66,7 @@ def _opt(entry: ConfigEntry, key: str, default):
 
 
 async def _setup_www_files(hass: HomeAssistant) -> None:
-    """Install the bundled hold-button card into <config>/www/vega/."""
+    """Install bundled cards and the device configuration panel."""
     try:
         source_dir = Path(__file__).parent / "www" / "vega"
         dest_dir = Path(hass.config.path("www")) / "vega"
@@ -91,10 +92,10 @@ async def _setup_www_files(hass: HomeAssistant) -> None:
 
 
 async def _register_card_resource(hass: HomeAssistant) -> None:
-    """Register every bundled card (/local/vega/*.js) as a Lovelace resource."""
+    """Register cards as Lovelace resources; the panel loads its own module."""
     try:
         source_dir = Path(__file__).parent / "www" / "vega"
-        js_files = sorted(f.name for f in source_dir.glob("*.js")) if source_dir.exists() else []
+        js_files = ["vega-hold-button.js", "vega-can-editor.js"] if source_dir.exists() else []
     except Exception:  # noqa: BLE001
         js_files = []
     try:
@@ -121,10 +122,26 @@ async def _register_card_resource(hass: HomeAssistant) -> None:
         _LOGGER.info("Could not auto-register Vega cards (%s); add /local/vega/*.js as JS modules manually", err)
 
 
+async def _register_editor_panel(hass: HomeAssistant) -> None:
+    """One hidden panel serves device links for all Vega config entries."""
+    from homeassistant.components import frontend, panel_custom
+
+    if PANEL_PATH in hass.data.get(frontend.DATA_PANELS, {}):
+        return
+    await panel_custom.async_register_panel(
+        hass,
+        frontend_url_path=PANEL_PATH,
+        webcomponent_name="vega-config-panel",
+        module_url=f"/local/vega/vega-config-panel.js?v={CARD_VERSION}",
+        require_admin=True,
+    )
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Vega from a config entry."""
     await _setup_www_files(hass)
     await _register_card_resource(hass)
+    await _register_editor_panel(hass)
     imei = (
         _opt(entry, CONF_IMEI, None)
         or _opt(entry, CONF_LEARNED_IMEI, None)
@@ -255,6 +272,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
         hass.data[DOMAIN].pop(entry.entry_id)
+        if not hass.data[DOMAIN]:
+            from homeassistant.components import frontend
+
+            frontend.async_remove_panel(hass, PANEL_PATH, warn_if_unknown=False)
     return unload_ok
 
 

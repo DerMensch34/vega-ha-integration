@@ -64,7 +64,7 @@ class VegaButton(CoordinatorEntity, ButtonEntity):
         self._fallback_name = name
         self._attr_unique_id = f"vega_{coordinator.imei}_{key}"
         self.entity_id = f"button.vega_{coordinator.imei}_{key}"
-        self._attr_device_info = build_device_info(coordinator.imei, coordinator.device_name)
+        self._attr_device_info = build_device_info(coordinator.imei, coordinator.device_name, coordinator.entry_id)
 
     @property
     def name(self) -> str:

@@ -19,7 +19,7 @@ vm.runInNewContext(fs.readFileSync(path.join(__dirname,
   '../custom_components/vega/www/vega/vega-can-editor.js'), 'utf8'), {
   HTMLElement: Element,
   document: {createElement: () => new Element()},
-  customElements: {define: (_, ctor) => { Editor = ctor; }},
+  customElements: {get: () => Editor, define: (_, ctor) => { Editor = ctor; }},
   CustomEvent: class { constructor(type, options) { Object.assign(this, {type}, options); } },
   window: {}, console: {info() {}},
 });

@@ -72,7 +72,7 @@ class VegaSwitch(CoordinatorEntity, SwitchEntity):
         self._attr_icon = icon
         self._attr_unique_id = f"vega_{coordinator.imei}_{key}"
         self.entity_id = f"switch.vega_{coordinator.imei}_{key}"
-        self._attr_device_info = build_device_info(coordinator.imei, coordinator.device_name)
+        self._attr_device_info = build_device_info(coordinator.imei, coordinator.device_name, coordinator.entry_id)
 
     @property
     def is_on(self) -> bool:

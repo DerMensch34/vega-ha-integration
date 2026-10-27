@@ -741,11 +741,11 @@ class VegaCanEditor extends HTMLElement {
   }
 }
 
-customElements.define("vega-can-editor", VegaCanEditor);
+if (!customElements.get("vega-can-editor")) customElements.define("vega-can-editor", VegaCanEditor);
 window.customCards = window.customCards || [];
-window.customCards.push({
+if (!window.customCards.some(card => card.type === "vega-can-editor")) window.customCards.push({
   type: "vega-can-editor",
-  name: "Vega CAN Editor",
-  description: "Просмотр и редактирование CAN-скриптов трекера (Setting 5502) в модальном окне с встроенным декодером",
+  name: "Vega Commands Editor",
+  description: "Условия сценариев, действия внешних выходов и связанные CAN-скрипты Vega",
 });
-console.info("%c VEGA-CAN-EDITOR v0.3.0 %c loaded ", "background:#00c0fc;color:#fff", "");
+console.info("%c VEGA-CAN-EDITOR v0.3.3 %c loaded ", "background:#00c0fc;color:#fff", "");
