@@ -1,6 +1,5 @@
 # Vega — вкладка (view) дашборда Home Assistant.
 # Замените IMEI 000000000000000 на ваш реальный IMEI трекера.
-# Замените YOUR_VEGA_ENTRY_ID на ID из адреса редактора /vega-config/<entry_id>.
 # Схема машины переиспользует SVG из /local/evolute/.
 # Добавляется через Raw configuration editor дашборда (внутри списка views:).
 
@@ -192,14 +191,14 @@ cards:
             entity: button.vega_000000000000000_horn
             require_hold: false
 
-      # Ссылка на отдельную страницу редактора команд этого трекера.
+      # Универсальная ссылка: один трекер откроется сразу, несколько — список выбора.
       - type: entities
         show_header_toggle: false
         entities:
           - type: weblink
             name: Команды и сценарии
             icon: mdi:cog-outline
-            url: /vega-config/YOUR_VEGA_ENTRY_ID
+            url: /vega-config
 
       # Двери и багажник
       - type: entities

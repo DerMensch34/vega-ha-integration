@@ -748,4 +748,4 @@ if (!window.customCards.some(card => card.type === "vega-can-editor")) window.cu
   name: "Vega Commands Editor",
   description: "Условия сценариев, действия внешних выходов и связанные CAN-скрипты Vega",
 });
-console.info("%c VEGA-CAN-EDITOR v0.3.3 %c loaded ", "background:#00c0fc;color:#fff", "");
+console.info("%c VEGA-CAN-EDITOR v0.3.4 %c loaded ", "background:#00c0fc;color:#fff", "");
